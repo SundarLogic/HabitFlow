@@ -42,8 +42,9 @@ Missing a day must never produce punitive feedback. Core tracking stays useful o
 | Layer | Technology |
 |---|---|
 | Frontend | React (Vite), React Router, TanStack Query, Tailwind CSS, Recharts |
-| Backend | Node 20, Express, PostgreSQL 16, Sequelize + sequelize-cli, Zod, Luxon, bcrypt, pino, helmet, cors, express-rate-limit, node-cron |
+| Backend | Node ≥ 20 (exact LTS pin pending), Express 5, PostgreSQL 16, Sequelize + sequelize-cli (pg, pg-hstore), Zod 4, Luxon, bcrypt, pino + pino-http, helmet, cors, cookie-parser, express-rate-limit, dotenv, node-cron |
 | Testing | Jest + Supertest (backend), Vitest + React Testing Library (frontend), Playwright (E2E) |
+| Backend tooling | nodemon, ESLint (flat config: @eslint/js, globals, eslint-config-prettier), Prettier, cross-env |
 | Local infra | Docker Compose (PostgreSQL 16, databases `habitflow_dev` and `habitflow_test`) |
 
 Do not add dependencies outside this list without recording the decision in `docs/DECISIONS.md`.
@@ -95,7 +96,7 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 - Completion rate = completed scheduled instances / total scheduled instances in the period (past and today only). A denominator of 0 returns `null`, and the UI shows an empty state.
 
 **Completable-date rules** (`PUT /habits/:id/completions/:date`)
-- `date` must be a valid `YYYY-MM-DD`, otherwise 400.
+- `date` must be a valid `YYYY-MM-DD`, otherwise 422 `VALIDATION_ERROR`.
 - `start_date ≤ date ≤ today (user tz)`. Future date or a date before the start → 422 `DATE_NOT_COMPLETABLE`.
 - For `weekdays` habits the date must be a scheduled weekday, otherwise 422 `DATE_NOT_SCHEDULED`.
 - The habit must be `active`. Archived → 409 `HABIT_ARCHIVED`. History of archived habits is read-only.
@@ -111,7 +112,7 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 
 **Workspaces / authorization**
 - Each user gets a `personal` workspace (role `owner`) at signup, in the same transaction that creates the user.
-- The active workspace comes from the `X-Workspace-Id` header. If the header is absent, the user's personal workspace is used. If the user is not a member of that workspace → 403 `WORKSPACE_FORBIDDEN`. Malformed ID → 400.
+- The active workspace comes from the `X-Workspace-Id` header. If the header is absent, the user's personal workspace is used. If the user is not a member of that workspace → 403 `WORKSPACE_FORBIDDEN`. Malformed ID → 422 `VALIDATION_ERROR`.
 - Every query for workspace-scoped data filters by the active `workspace_id`. A resource that exists in another workspace or belongs to another user returns **404 `NOT_FOUND`** (never leak existence).
 
 **Plans / entitlements**
@@ -127,15 +128,52 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 routes -> validators (Zod) -> controllers (HTTP only) -> services (business logic, transactions) -> models
 ```
 
-- **routes/**: path + middleware wiring only.
-- **validators/**: Zod schemas for `body`, `params` and `query`, applied by a shared `validate()` middleware. Validation failure → 400 `VALIDATION_ERROR` with `details`.
+- **routes/**: path + middleware wiring only. `routes/index.js` mounts every router under `/api/v1`.
+- **validators/**: Zod schemas for `body`, `params` and `query`, applied by `validate({ body, params, query })` (`middleware/validate.js`). The parsed output (coerced, defaults applied, unknown keys stripped) **replaces** `req.body` / `req.params` / `req.query`. Validation failure → 422 `VALIDATION_ERROR` with `details: [{ location, path, message }]`.
 - **controllers/**: read the validated input, call one service, and shape the HTTP response. **Controllers never query the DB directly** and never import models.
 - **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`.
-- **models/**: Sequelize models and associations only. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside tests.
-- **middleware/**: auth (session resolution), csrf, workspace resolution, rate limiting, request logging, and the central error handler.
+- **models/**: Sequelize models and associations only. `models/index.js` creates the shared `sequelize` instance. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside test setup helpers.
+- **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter` → 429 via the error handler); later auth, csrf, workspace resolution.
 - **jobs/**: node-cron jobs (session purge, notification generation and purge).
-- **config/**: environment parsing (validated with Zod at startup; fail fast) and the Sequelize config.
-- `app.js` builds the Express app (testable without listening). `server.js` starts it.
+- **config/**:
+  - `env.js`: loads `backend/.env`, validates every variable with Zod and exits with a readable message if anything is invalid. Import `env` from here; never read `process.env` elsewhere in app code.
+  - `database.cjs`: the single DB config shared by sequelize-cli and the app (development / test / production).
+  - `logger.js`: the pino logger and its redaction paths.
+- **utils/**: `AppError.js` (typed errors) and `clock.js` (the injectable `now()`).
+- `app.js` exports `createApp({ db, logger })` and never listens, so tests inject fakes. `server.js` listens and handles graceful shutdown: on SIGTERM/SIGINT it closes the HTTP server, then the DB pool, and force-exits after 10 s. `unhandledRejection` and `uncaughtException` log at fatal level and exit 1.
+
+**Async errors:** we rely on **Express 5 native async error handling**. A rejected promise or a throw in an `async` handler is forwarded to the error handler automatically. Do not add an `asyncHandler` wrapper.
+
+**Errors:** throw `AppError` subclasses from services and middleware. Each fixes the status, while `code` and `details` can be overridden, e.g. `new ConflictError('Email already registered', { code: 'EMAIL_TAKEN' })`.
+
+| Class | Status | Default code |
+|---|---|---|
+| `BadRequestError` | 400 | `BAD_REQUEST` |
+| `UnauthorizedError` | 401 | `UNAUTHENTICATED` |
+| `ForbiddenError` | 403 | `FORBIDDEN` |
+| `NotFoundError` | 404 | `NOT_FOUND` |
+| `ConflictError` | 409 | `CONFLICT` |
+| `ValidationError` | 422 | `VALIDATION_ERROR` (pass a specific code for business rules, e.g. `DATE_NOT_COMPLETABLE`) |
+| `RateLimitedError` | 429 | `RATE_LIMITED` |
+
+The central error handler maps everything else as follows:
+
+| Thrown | Response |
+|---|---|
+| Sequelize `UniqueConstraintError` | 409 `UNIQUE_VIOLATION`, `details.fields` (field names only, never values) |
+| `ForeignKeyConstraintError` on insert/update (missing parent) | 422 `INVALID_REFERENCE` |
+| `ForeignKeyConstraintError` on delete (row still referenced) | 409 `RESOURCE_IN_USE` |
+| Sequelize `ValidationError` | 422 `VALIDATION_ERROR` |
+| Invalid JSON body | 400 `INVALID_JSON` |
+| Body over 100 kb | 413 `PAYLOAD_TOO_LARGE` |
+| Unknown route | 404 `NOT_FOUND` |
+| Anything else | 500 `INTERNAL_ERROR`, "Internal server error" |
+
+A `stack` field is added to 500 responses only when `NODE_ENV=development`.
+
+**Migrations and seeders** live in `src/migrations` and `src/seeders` and **must use the `.cjs` extension**, because the package is `"type": "module"` and sequelize-cli loads them with `require()`. `migration:generate` creates `.js` files, so rename them to `.cjs`.
+- Always run the CLI through `npm run sequelize -- <command>`. It passes `--options-path .sequelizerc.cjs`; a plain `npx sequelize-cli` will not find our config.
+- Seeders are not recorded, so each one must be **idempotent** (upsert / `ON CONFLICT`).
 
 Database conventions: UUID primary keys, snake_case tables and columns (`underscored: true`), `created_at`/`updated_at` TIMESTAMPTZ, FKs with explicit `ON DELETE` behaviour, CHECK constraints for enums (`frequency_type`, weekday 1–7, `target_per_week` 1–7), and indexes on `workspace_id`, `habit_id`, `completion_date`, `(user_id, read_at)`.
 
@@ -146,9 +184,20 @@ Database conventions: UUID primary keys, snake_case tables and columns (`undersc
 - All routes are prefixed `/api/v1`.
 - **Success:** a single JSON resource, or `{ "data": [...], "meta": { "page", "limit", "total" } }` for collections.
 - **Error:** `{ "error": { "code": "SCREAMING_SNAKE", "message": "Human readable", "details": <optional> } }`. Never return stack traces or internal messages for 500s.
-- **Status codes:** 200 OK · 201 Created · 204 No Content · 400 malformed/validation · 401 unauthenticated · 403 forbidden (CSRF, workspace, plan limit) · 404 not found/not yours · 409 conflict (duplicate email, state conflict) · 422 well-formed but violates a business rule · 429 rate limited · 500 unexpected.
-- **Pagination:** `?page=1&limit=20`. `page` ≥ 1, `limit` 1–100 (default 20). Values over 100 → 400.
-- **Date ranges:** `?from=YYYY-MM-DD&to=YYYY-MM-DD`, inclusive, `from ≤ to`, span ≤ 366 days, otherwise 400.
+- **Status codes:**
+  - 200 OK · 201 Created · 204 No Content
+  - 400 request can't be parsed (invalid JSON)
+  - 401 unauthenticated
+  - 403 forbidden (CSRF, workspace, plan limit)
+  - 404 not found / not yours
+  - 409 conflict (duplicate, state conflict, still referenced)
+  - 413 body too large
+  - 422 validation failed (`VALIDATION_ERROR`) or a business rule was violated (specific code)
+  - 429 rate limited · 500 unexpected
+- **Pagination:** `?page=1&limit=20`. `page` ≥ 1, `limit` 1–100 (default 20). Out-of-range values → 422.
+- **Date ranges:** `?from=YYYY-MM-DD&to=YYYY-MM-DD`, inclusive, `from ≤ to`, span ≤ 366 days, otherwise 422.
+- **Request IDs:** every response carries `X-Request-Id`. A safe incoming value (`[A-Za-z0-9._-]{1,128}`) is echoed; otherwise a UUID is generated. The ID appears in every log line for that request.
+- **Health:** `GET /api/v1/health` → `200 { status: 'ok', db: 'ok' | 'down', time }`. The database is checked with `SELECT 1` (2 s timeout). The response stays 200 when `db` is `down`: the process is alive and the body tells the caller the rest.
 - Field names in JSON are camelCase. DB columns are snake_case.
 - Endpoint list: see PRD §9. Deferred: invitations, team management, subscriptions, billing.
 
@@ -161,8 +210,17 @@ Database conventions: UUID primary keys, snake_case tables and columns (`undersc
 - Logging with pino only (no `console.log` in committed code). **Never log secrets, passwords, session tokens, CSRF tokens, cookies or `Authorization` headers.** Configure pino `redact` accordingly.
 - Secrets come only from environment variables. Commit `.env.example` files only.
 - **Every endpoint has tests**, including authorization tests: unauthenticated → 401, another user's or another workspace's resource → 404/403, and missing CSRF → 403. Date-boundary tests (timezone edges, week edges, DST) are required for any time-dependent logic.
-- Backend tests run against `habitflow_test` and never `habitflow_dev`.
+- Backend tests run against `habitflow_test` and never `habitflow_dev`. Several guards refuse any database whose name doesn't end in `_test`: `env.js`, `database.cjs` and `truncateAllTables`.
+- **Test harness** (`backend/tests/`):
+  - `setup/globalSetup.js` runs all migrations once.
+  - `setup/setupEnv.js` forces `NODE_ENV=test` and `LOG_LEVEL=silent` unless the shell sets it.
+  - `setup/setupAfterEnv.js` closes the pool after each file.
+  - Call `truncateAllTables({ except })` from `helpers/db.js` in `beforeEach` of any DB-writing test.
+  - Files run serially (`maxWorkers: 1`) because they share one database.
+  - Build apps with `createApp({ db })` to inject fakes. Use `unit/` for pure logic and `integration/` for HTTP and DB tests.
+- Native ESM in Jest: `npm test` sets `NODE_OPTIONS=--experimental-vm-modules`. The `jest` object is not a global under ESM (`describe`, `it` and `expect` are). Import it from `@jest/globals` if needed.
 - Formatting follows `.editorconfig` (2 spaces, LF, UTF-8).
+- **Comments are written for junior developers.** Every source and test file starts with a header comment saying what the file is for and how it fits the request flow. Exported functions get JSDoc (purpose, params, return). Non-obvious lines get a short comment explaining *why*: security rules, Express/Zod/Sequelize quirks, safety guards. Don't comment what the code already says plainly.
 - No silent TODOs. Any `TODO` must reference a tracked item and be listed in the phase summary.
 
 ---
@@ -176,10 +234,18 @@ Database conventions: UUID primary keys, snake_case tables and columns (`undersc
 | List databases | `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "\l habitflow_*"'` |
 | Stop Postgres | `docker compose down` |
 | Reset Postgres (**destroys data**) | `docker compose down -v` |
-| Install backend deps | _(added in a later phase)_ |
-| Run backend dev server | _(added in a later phase)_ |
-| Run migrations / seeders | _(added in a later phase)_ |
-| Backend lint / tests | _(added in a later phase)_ |
+| **Backend** (run inside `backend/`) | |
+| Install deps | `npm install` |
+| Configure env | copy `.env.example` → `.env` (DB_PORT must match the root `POSTGRES_PORT`) |
+| Dev server (auto-restart) | `npm run dev` → http://localhost:3000/api/v1/health |
+| Production start | `npm start` |
+| Tests (migrates test DB first) | `npm test` · watch: `npm run test:watch` · one file: `npm test -- tests/unit/env.test.js` |
+| Lint | `npm run lint` |
+| Format / check formatting | `npm run format` / `npm run format:check` |
+| Migrate dev DB / undo last | `npm run db:migrate` / `npm run db:migrate:undo` |
+| Seed dev DB (idempotent) | `npm run db:seed` |
+| Reset **test** DB (undo all, migrate, seed) | `npm run db:reset` |
+| Any other sequelize-cli command | `npm run sequelize -- <command>`, e.g. `npm run sequelize -- migration:generate --name create-users` (then rename the file to `.cjs`) |
 | Frontend dev / lint / tests | _(added in a later phase)_ |
 | E2E tests (Playwright) | _(added in a later phase)_ |
 
@@ -200,3 +266,4 @@ Database conventions: UUID primary keys, snake_case tables and columns (`undersc
 | Phase | Summary |
 |---|---|
 | 0 | Repository scaffold, docker-compose Postgres 16 (dev + test DBs), CLAUDE.md, DECISIONS.md, README. No feature code. Verified: `docker compose up -d` → healthy; both DBs exist. §3.1 rules approved. |
+| 1 | Backend foundation: Zod-validated env, shared DB config, sequelize-cli wiring (.cjs), app/server split with graceful shutdown, helmet/cors/json/cookie-parser, pino-http with request IDs and redaction, validate(), AppError family, central error handler + 404, rate-limiter factory, `GET /api/v1/health`, Jest ESM harness (migrate once, truncate helper), ESLint + Prettier. 46 tests passing. No feature endpoints. |

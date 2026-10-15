@@ -48,7 +48,23 @@ Stop with `docker compose down`.
 
 ## 2. Backend setup
 
-_Coming in a later phase:_ install dependencies, configure `backend/.env`, run migrations and seeders, start the dev server.
+```bash
+cd backend
+npm install
+cp .env.example .env     # set DB_PASSWORD and TEST_DATABASE_URL to match the root .env;
+                         # DB_PORT must equal POSTGRES_PORT
+npm run db:migrate
+npm run db:seed
+npm run dev              # http://localhost:3000/api/v1/health
+```
+
+The API validates every environment variable at startup. If something is missing or malformed, it exits and lists exactly which variables to fix. [backend/.env.example](backend/.env.example) documents each one.
+
+Expected health response:
+
+```json
+{ "status": "ok", "db": "ok", "time": "2026-10-15T06:36:52.431Z" }
+```
 
 ## 3. Frontend setup
 
@@ -56,4 +72,14 @@ _Coming in a later phase._
 
 ## 4. Running tests
 
-_Coming in a later phase:_ backend (Jest + Supertest), frontend (Vitest + RTL), E2E (Playwright).
+Backend (Jest + Supertest, against `habitflow_test`; Postgres must be running):
+
+```bash
+cd backend
+npm test            # migrates the test DB, then runs unit + integration tests
+npm run lint
+```
+
+Frontend (Vitest + RTL) and E2E (Playwright): _coming in later phases._
+
+See [CLAUDE.md §7](CLAUDE.md) for the full command list.

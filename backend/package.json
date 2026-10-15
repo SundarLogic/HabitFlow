@@ -6,7 +6,49 @@
   "type": "module",
   "main": "src/server.js",
   "engines": {
-    "node": ">=20 <21"
+    "node": ">=20"
   },
-  "scripts": {}
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "test": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:watch": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --watch",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:migrate": "sequelize-cli --options-path .sequelizerc.cjs db:migrate",
+    "db:migrate:undo": "sequelize-cli --options-path .sequelizerc.cjs db:migrate:undo",
+    "db:seed": "sequelize-cli --options-path .sequelizerc.cjs db:seed:all",
+    "db:reset": "cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:migrate:undo:all && cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:migrate && cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:seed:all",
+    "sequelize": "sequelize-cli --options-path .sequelizerc.cjs"
+  },
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.8",
+    "express": "^5.3.0",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "luxon": "^3.7.2",
+    "node-cron": "^4.6.0",
+    "pg": "^8.23.1",
+    "pg-hstore": "^2.3.4",
+    "pino": "^10.4.0",
+    "pino-http": "^11.0.0",
+    "sequelize": "^6.37.8",
+    "sequelize-cli": "^6.6.5",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "cross-env": "^10.1.0",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.13.0",
+    "jest": "^30.5.2",
+    "nodemon": "^3.1.14",
+    "prettier": "^3.9.10",
+    "supertest": "^7.3.1"
+  }
 }

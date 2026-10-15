@@ -1,0 +1,6 @@
+{
+  "watch": ["src", ".env"],
+  "ext": "js,cjs,json",
+  "ignore": ["src/migrations/**", "src/seeders/**"],
+  "signal": "SIGTERM"
+}

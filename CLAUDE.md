@@ -65,12 +65,14 @@ Do not add dependencies outside this list without recording the decision in `doc
 _Approved by the product owner on 2026-10-14. These rules are binding: change them only through a new ADR in `docs/DECISIONS.md`._
 
 **Auth / sessions**
-- Token: 32 bytes from `crypto.randomBytes`, base64url. Cookie name `hf_session`. Only `sha256(token)` is stored in `sessions.token_hash` (unique), along with `user_id`, `expires_at`, `last_used_at`, `created_at`, `user_agent`.
-- Session lifetime = `SESSION_TTL_DAYS` (default 30). Expired sessions are rejected and purged by a node-cron job.
-- `Authorization: Bearer <token>` is accepted as an alternative to the cookie. **CSRF checks apply only to cookie-authenticated requests**, not Bearer.
-- Passwords: bcrypt, cost ≥ 12. Login failures return a generic `INVALID_CREDENTIALS` and do not reveal whether the email exists.
-- Auth endpoints (signup/login) are rate-limited with express-rate-limit.
-- `csrf_token` cookie: random, **not** HttpOnly (the SPA must read it), SameSite=Lax, Secure in production. The server compares it to the `X-CSRF-Token` header in constant time. Mismatch → 403 `CSRF_TOKEN_INVALID`.
+- Token: 32 bytes from `crypto.randomBytes`, base64url. Cookie name `hf_session` (HttpOnly, SameSite=Lax, Path=/, Secure when `COOKIE_SECURE`). Only `sha256(token)` is stored in `sessions.token_hash` (unique), along with `user_id`, `expires_at`, `last_used_at`, `created_at`, `user_agent`, `ip`.
+- Session lifetime = `SESSION_TTL_DAYS` (default 30), **sliding**: when a session is used and `last_used_at` is ≥ 5 minutes old, both `last_used_at` and `expires_at` move forward and the cookie is re-sent (ADR-031). Expired sessions are rejected and deleted on use, and purged by `runSessionCleanup` (node-cron schedule in Phase 7).
+- `Authorization: Bearer <token>` is accepted as an alternative to the cookie. The cookie wins if both are sent. **CSRF checks apply only to cookie-authenticated requests**, not Bearer.
+- Passwords: 8–128 characters with at least one letter and one number (Unicode-aware). Stored as `bcrypt(base64(sha256(password)))` with cost 12 (ADR-030); always use `utils/password.js`. Login failures return a generic 401 `INVALID_CREDENTIALS` and do not reveal whether the email exists: bcrypt runs against a dummy hash for unknown emails. A wrong current password on password change or account deletion → 422 `INVALID_CURRENT_PASSWORD`.
+- Emails are trimmed and lowercased (validator, model setter and DB CHECK).
+- Rate limits (ADR-033): signup and login share 10 requests per 15 min per IP + email. All of `/api` allows 300 per 15 min per IP. Over the limit → 429 `RATE_LIMITED`.
+- `csrf_token` cookie: random, **not** HttpOnly (the SPA must read it), SameSite=Lax, Secure in production. It is rotated at signup and login, and `GET /auth/csrf` issues or refreshes it. The server compares it to the `X-CSRF-Token` header in constant time. Mismatch → 403 `CSRF_TOKEN_INVALID`. Signup and login are not CSRF-checked (ADR-034).
+- Password change revokes every **other** session of the user, keeping the current one.
 
 **Time**
 - `users.timezone` is a valid IANA zone (validated with Luxon), default `UTC`.
@@ -108,11 +110,12 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 - `DELETE /habits/:id?permanent=true` hard-deletes and is only allowed when the habit is already archived, otherwise 409 `HABIT_NOT_ARCHIVED`. It removes the habit, its schedule days and its completions in one transaction (FKs are `ON DELETE CASCADE`), leaving no orphans.
 - Restoring (`PATCH status: 'active'`) counts against the plan's active-habit limit.
 - Notifications older than 90 days are purged by a cron job.
-- Account deletion is out of first-release scope. When it is added, it must cascade through the user's personal workspace.
+- Account deletion (`DELETE /users/me`, password re-typed) deletes the personal workspace (cascading its data) and then the user, in one transaction. If the user still owns a team workspace or has history in another workspace, RESTRICT FKs roll it back → 409 `RESOURCE_IN_USE` (ADR-032).
 
 **Workspaces / authorization**
 - Each user gets a `personal` workspace (role `owner`) at signup, in the same transaction that creates the user.
-- The active workspace comes from the `X-Workspace-Id` header. If the header is absent, the user's personal workspace is used. If the user is not a member of that workspace → 403 `WORKSPACE_FORBIDDEN`. Malformed ID → 422 `VALIDATION_ERROR`.
+- The active workspace comes from the `X-Workspace-Id` header. If the header is absent, the user's personal workspace is used. If the user is not a member of that workspace, or it doesn't exist → **404 `NOT_FOUND`** (ADR-029, superseding 403 `WORKSPACE_FORBIDDEN`). Malformed ID → 422 `VALIDATION_ERROR`. A member whose role is not allowed (`requireRole`) → 403 `INSUFFICIENT_ROLE`.
+- Signup creates, in one transaction: user → personal workspace `"<name>'s Habits"` → owner membership → `active` subscription on `free` → first session.
 - Every query for workspace-scoped data filters by the active `workspace_id`. A resource that exists in another workspace or belongs to another user returns **404 `NOT_FOUND`** (never leak existence).
 
 **Plans / entitlements**
@@ -133,14 +136,16 @@ routes -> validators (Zod) -> controllers (HTTP only) -> services (business logi
 - **controllers/**: read the validated input, call one service, and shape the HTTP response. **Controllers never query the DB directly** and never import models.
 - **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`.
 - **models/**: Sequelize models and associations only. `models/index.js` creates the shared `sequelize` instance and exports every model (`import { sequelize, User, Habit } from '../models/index.js'`). One class per file with `static initModel(sequelize)` and `static associate(models)`; index.js inits all, then associates all. `constants.js` holds the allowed enum values. Model validators mirror the DB CHECKs. `User`'s default scope excludes `passwordHash`; only login code uses `User.scope('withPassword')`, and `toJSON()` always strips it. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside test setup helpers. Schema reference: [docs/ERD.md](docs/ERD.md).
-- **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter` → 429 via the error handler); later auth, csrf, workspace resolution.
+- **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter`, `createAuthRateLimiter` → 429 via the error handler), `auth` (`requireAuth`), `csrf` (`csrfProtection`), `workspace` (`resolveWorkspace`, `requireRole`). See "Auth flow" below for the order.
+- **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash) and `toPublicWorkspace(workspace, role)`. Controllers never `res.json()` a model instance.
 - **jobs/**: node-cron jobs (session purge, notification generation and purge).
 - **config/**:
   - `env.js`: loads `backend/.env`, validates every variable with Zod and exits with a readable message if anything is invalid. Import `env` from here; never read `process.env` elsewhere in app code.
   - `database.cjs`: the single DB config shared by sequelize-cli and the app (development / test / production).
   - `logger.js`: the pino logger and its redaction paths.
-- **utils/**: `AppError.js` (typed errors) and `clock.js` (the injectable `now()`).
-- `app.js` exports `createApp({ db, logger })` and never listens, so tests inject fakes. `server.js` listens and handles graceful shutdown: on SIGTERM/SIGINT it closes the HTTP server, then the DB pool, and force-exits after 10 s. `unhandledRejection` and `uncaughtException` log at fatal level and exit 1.
+  - `auth.js`: cookie/header names, session TTL and touch interval, bcrypt cost, rate limits.
+- **utils/**: `AppError.js` (typed errors), `clock.js` (the injectable `now()`), `tokens.js` (random tokens, `hashToken`, constant-time `safeEqual`), `password.js` (`hashPassword` / `verifyPassword`), `cookies.js` (set/clear the auth cookies with the right flags).
+- `app.js` exports `createApp({ db, logger, now, rateLimits })` and never listens, so tests inject fakes. Middleware reads the clock from `req.app.locals.now`. Rate limiters and the API router (`createApiRouter`) are built per app, so tests don't share limiter counters. `server.js` listens and handles graceful shutdown: on SIGTERM/SIGINT it closes the HTTP server, then the DB pool, and force-exits after 10 s. `unhandledRejection` and `uncaughtException` log at fatal level and exit 1.
 
 **Async errors:** we rely on **Express 5 native async error handling**. A rejected promise or a throw in an `async` handler is forwarded to the error handler automatically. Do not add an `asyncHandler` wrapper.
 
@@ -180,6 +185,28 @@ Database conventions: UUID primary keys (`gen_random_uuid()` from pgcrypto, enab
 - A CHECK on a nullable column must handle NULL explicitly: a CHECK that evaluates to NULL **passes** (e.g. `target_per_week IS NOT NULL AND target_per_week BETWEEN 1 AND 7`).
 - Seeders: `*-plans.cjs` runs everywhere (upsert on `code`). `*-demo-data.cjs` runs only in development, throws in production and is a no-op in test (ADR-028). Demo login: `demo@habitflow.local` / `habitflow-demo`.
 
+### 4.1 Auth flow
+
+**Middleware order on a protected route:**
+`/api` rate limit → `requireAuth` → `csrfProtection` (unsafe methods only) → `resolveWorkspace` (workspace-scoped routes) → `requireRole(...)` (when needed) → `validate(...)` → controller.
+CSRF runs before validation so a forged request learns nothing from validation messages.
+
+| Step | What happens |
+|---|---|
+| Signup `POST /auth/signup` | Auth limiter → validate → bcrypt (outside the transaction) → transaction: user, personal workspace, owner membership, free subscription, session → `hf_session` + fresh `csrf_token` cookies → 201 `{ user }`. |
+| Login `POST /auth/login` | Auth limiter → validate → bcrypt compare (dummy hash if the email is unknown) → `last_login_at` + new session → both cookies (CSRF rotated) → 200 `{ user }`. |
+| Each request | `requireAuth`: token from `hf_session`, else `Bearer` → `sha256` → session lookup with user → expired? delete + 401 → touch if ≥ 5 min (re-send cookie) → sets `req.user`, `req.session`, `req.authMethod`. |
+| Unsafe request | `csrfProtection`: cookie auth needs `X-CSRF-Token` == `csrf_token` cookie (constant time), else 403 `CSRF_TOKEN_INVALID`. Bearer is exempt. |
+| Workspace | `resolveWorkspace`: `X-Workspace-Id` (UUID, else 422) or the personal workspace → membership lookup → 404 if none → sets `req.workspace`, `req.membership.role`. |
+| Logout `POST /auth/logout` | Deletes this session row (immediate revocation), clears both cookies, 204. |
+| Password change | Verify the current password → new hash + delete all other sessions in one transaction → 204. |
+| Account deletion | Verify the password → transaction: delete personal workspace (cascade), then user → clear cookies → 204. |
+| Cleanup | `jobs/sessionCleanup.js` `runSessionCleanup()` deletes sessions with `expires_at ≤ now` (scheduled nightly in Phase 7). |
+
+**SPA bootstrap:** `GET /auth/csrf` (gets a CSRF cookie) → `GET /auth/me` (401 = show login) → send `X-CSRF-Token` with the `csrf_token` cookie value on every non-GET request, plus `credentials: 'include'`.
+
+**Implemented endpoints (Phase 3):** `POST /auth/signup`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET /auth/csrf`, `GET /workspaces`, `PATCH /users/me`, `PATCH /users/me/password`, `DELETE /users/me`.
+
 ---
 
 ## 5. API conventions
@@ -191,7 +218,7 @@ Database conventions: UUID primary keys (`gen_random_uuid()` from pgcrypto, enab
   - 200 OK · 201 Created · 204 No Content
   - 400 request can't be parsed (invalid JSON)
   - 401 unauthenticated
-  - 403 forbidden (CSRF, workspace, plan limit)
+  - 403 forbidden (CSRF, insufficient role, plan limit)
   - 404 not found / not yours
   - 409 conflict (duplicate, state conflict, still referenced)
   - 413 body too large
@@ -220,6 +247,7 @@ Database conventions: UUID primary keys (`gen_random_uuid()` from pgcrypto, enab
   - `setup/setupAfterEnv.js` closes the pool after each file.
   - Call `truncateAllTables({ except })` from `helpers/db.js` in `beforeEach` of any DB-writing test.
   - Files run serially (`maxWorkers: 1`) because they share one database.
+  - `helpers/auth.js`: `createTestApp()` (createApp with relaxed rate limits; rate-limit tests use `createApp()`), `seedPlans()` (call in `beforeAll`, then `truncateAllTables({ except: ['plans'] })`), `signupAgent(app)` / `loginAgent(app, creds)` (a cookie-keeping Supertest agent plus `csrfToken` and `sessionToken`), and `cookieValue(res, name)`.
   - `helpers/factories.js` inserts valid rows (`createUser`, `createUserWithWorkspace`, `createHabit`) so tests only spell out the fields they care about.
   - Build apps with `createApp({ db })` to inject fakes. Use `unit/` for pure logic, `integration/` for HTTP tests, and `db/` for schema, model and seeder tests. To test a DB constraint rather than the model validator in front of it, pass `{ validate: false }` to `create()`.
 - Native ESM in Jest: `npm test` sets `NODE_OPTIONS=--experimental-vm-modules`. The `jest` object is not a global under ESM (`describe`, `it` and `expect` are). Import it from `@jest/globals` if needed.
@@ -272,3 +300,4 @@ Database conventions: UUID primary keys (`gen_random_uuid()` from pgcrypto, enab
 | 0 | Repository scaffold, docker-compose Postgres 16 (dev + test DBs), CLAUDE.md, DECISIONS.md, README. No feature code. Verified: `docker compose up -d` → healthy; both DBs exist. §3.1 rules approved. |
 | 1 | Backend foundation: Zod-validated env, shared DB config, sequelize-cli wiring (.cjs), app/server split with graceful shutdown, helmet/cors/json/cookie-parser, pino-http with request IDs and redaction, validate(), AppError family, central error handler + 404, rate-limiter factory, `GET /api/v1/health`, Jest ESM harness (migrate once, truncate helper), ESLint + Prettier. 46 tests passing. No feature endpoints. |
 | 2 | Database schema: 11 migrations (users, sessions, plans, workspaces, workspace_members, workspace_subscriptions, habits, habit_schedule_days, habit_completions, habit_reminders, notifications) with named CHECK/UNIQUE constraints, partial unique index (one personal workspace per owner) and access-path indexes. 11 models + associations, User password scopes. Seeders: plans (free = 10 active habits, pro unlimited and not purchasable) and dev-only demo data. Test factories and `tests/db/` (constraints, cascades, model scopes/associations, seeders). docs/ERD.md. ADR-024 to ADR-028. Verified: migrate → undo:all → migrate on a fresh DB, seeders idempotent, 88 tests passing. No endpoints. |
+| 3 | Authentication and workspace authorization: authService (signup transaction, constant-time login, sessions with sliding expiry, logout/logoutAll, expired-session purge), userService (profile, password change revoking other sessions, account deletion), workspaceService (active workspace, listing, plan lookup). Middleware: requireAuth (cookie or Bearer), csrfProtection, resolveWorkspace (404 for non-members), requireRole, IP+email auth rate limiter and general /api limiter. Endpoints: auth signup/login/logout/me/csrf, GET /workspaces, PATCH/DELETE /users/me, PATCH /users/me/password. `toPublicUser` serializer, `runSessionCleanup` job (not yet scheduled). ADR-029 to ADR-034. 174 tests passing. Follow-ups: schedule the cleanup job (Phase 7); set Express `trust proxy` before deploying behind a proxy, so rate limits see client IPs. |

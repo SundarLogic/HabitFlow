@@ -7,8 +7,11 @@
  *     app object, not a running server. Keeping them separate makes the app easy to test.
  *
  * How a request flows through the app (top to bottom, in the order of app.use calls):
- *   requestLogger -> helmet -> cors -> express.json -> cookieParser
+ *   requestLogger -> helmet -> cors -> express.json -> cookieParser -> /api rate limit
  *     -> /api/v1 routes -> notFoundHandler (no route matched) -> errorHandler (something failed)
+ *
+ * Protected routes then add their own middleware: requireAuth (who is calling?),
+ * csrfProtection (did our SPA send this?), resolveWorkspace (which workspace?). See routes/.
  *
  * Async errors: we use Express 5, which automatically catches errors thrown inside `async`
  * route handlers and passes them to errorHandler. So we do NOT need try/catch in every
@@ -18,12 +21,15 @@ import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
+import { API_RATE_LIMIT, AUTH_RATE_LIMIT } from './config/auth.js';
 import { env } from './config/env.js';
 import { logger as defaultLogger } from './config/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import { createRateLimiter } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { sequelize } from './models/index.js';
-import { apiRouter } from './routes/index.js';
+import { createApiRouter } from './routes/index.js';
+import { now as systemNow } from './utils/clock.js';
 
 /**
  * Creates a fully configured Express app.
@@ -35,14 +41,24 @@ import { apiRouter } from './routes/index.js';
  * @param {object} [deps]
  * @param {object} [deps.db] database connection (defaults to the real Sequelize instance)
  * @param {object} [deps.logger] pino logger (defaults to the shared app logger)
+ * @param {() => Date} [deps.now] clock used by auth (session expiry); tests can freeze time
+ * @param {{ api?: { windowMs: number, limit: number }, auth?: { windowMs: number, limit: number } }}
+ *   [deps.rateLimits] override the rate limits (tests use tiny ones)
  * @returns {import('express').Express}
  */
-export function createApp({ db = sequelize, logger = defaultLogger } = {}) {
+export function createApp({
+  db = sequelize,
+  logger = defaultLogger,
+  now = systemNow,
+  rateLimits = {},
+} = {}) {
   const app = express();
 
   // app.locals is a place to store app-wide values. Controllers read the db from here
   // (req.app.locals.db) so tests can swap it out.
   app.locals.db = db;
+  // Same idea for the clock: middleware and controllers read req.app.locals.now.
+  app.locals.now = now;
 
   // 1. Log every request/response and give each request a unique X-Request-Id.
   //    Registered first so even failing requests are logged.
@@ -71,13 +87,17 @@ export function createApp({ db = sequelize, logger = defaultLogger } = {}) {
   // 5. Parse the Cookie header into req.cookies (used later for session + CSRF cookies).
   app.use(cookieParser());
 
-  // 6. All API routes live under /api/v1 (see routes/index.js).
-  app.use('/api/v1', apiRouter);
+  // 6. General rate limit for the whole API, per IP. Login/signup have a stricter one of their
+  //    own (routes/authRoutes.js). Limiters are created per app, so tests don't share counters.
+  app.use('/api', createRateLimiter(rateLimits.api ?? API_RATE_LIMIT));
 
-  // 7. If no route matched, respond with a 404 in our standard error format.
+  // 7. All API routes live under /api/v1 (see routes/index.js).
+  app.use('/api/v1', createApiRouter({ authRateLimit: rateLimits.auth ?? AUTH_RATE_LIMIT }));
+
+  // 8. If no route matched, respond with a 404 in our standard error format.
   app.use(notFoundHandler);
 
-  // 8. Error handler MUST be registered last. Any error thrown or passed to next(err)
+  // 9. Error handler MUST be registered last. Any error thrown or passed to next(err)
   //    anywhere above ends up here and is turned into a JSON error response.
   app.use(errorHandler);
 

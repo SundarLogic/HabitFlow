@@ -116,9 +116,9 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 - Every query for workspace-scoped data filters by the active `workspace_id`. A resource that exists in another workspace or belongs to another user returns **404 `NOT_FOUND`** (never leak existence).
 
 **Plans / entitlements**
-- The `plans` table holds `code` (`free`, `pro`), `name` and `limits` JSONB (e.g. `{ "max_active_habits": 10 }`). It is seeded by a seeder, and limits are never hard-coded in services.
+- The `plans` table holds `code` (`free`, `pro`), `name`, `limits` JSONB (`{ "maxActiveHabits": 10, "historyDays": null }`, `null` = unlimited) and `features` JSONB. It is seeded by a seeder, and limits are never hard-coded in services. `pro` is active but `features.purchasable = false` until billing exists (ADR-026).
 - A workspace without an active row in `workspace_subscriptions` uses the `free` plan.
-- Creating or restoring a habit beyond `max_active_habits` → 403 `PLAN_LIMIT_REACHED`.
+- Creating or restoring a habit beyond `limits.maxActiveHabits` → 403 `PLAN_LIMIT_REACHED`.
 
 ---
 
@@ -132,7 +132,7 @@ routes -> validators (Zod) -> controllers (HTTP only) -> services (business logi
 - **validators/**: Zod schemas for `body`, `params` and `query`, applied by `validate({ body, params, query })` (`middleware/validate.js`). The parsed output (coerced, defaults applied, unknown keys stripped) **replaces** `req.body` / `req.params` / `req.query`. Validation failure → 422 `VALIDATION_ERROR` with `details: [{ location, path, message }]`.
 - **controllers/**: read the validated input, call one service, and shape the HTTP response. **Controllers never query the DB directly** and never import models.
 - **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`.
-- **models/**: Sequelize models and associations only. `models/index.js` creates the shared `sequelize` instance. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside test setup helpers.
+- **models/**: Sequelize models and associations only. `models/index.js` creates the shared `sequelize` instance and exports every model (`import { sequelize, User, Habit } from '../models/index.js'`). One class per file with `static initModel(sequelize)` and `static associate(models)`; index.js inits all, then associates all. `constants.js` holds the allowed enum values. Model validators mirror the DB CHECKs. `User`'s default scope excludes `passwordHash`; only login code uses `User.scope('withPassword')`, and `toJSON()` always strips it. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside test setup helpers. Schema reference: [docs/ERD.md](docs/ERD.md).
 - **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter` → 429 via the error handler); later auth, csrf, workspace resolution.
 - **jobs/**: node-cron jobs (session purge, notification generation and purge).
 - **config/**:
@@ -175,7 +175,10 @@ A `stack` field is added to 500 responses only when `NODE_ENV=development`.
 - Always run the CLI through `npm run sequelize -- <command>`. It passes `--options-path .sequelizerc.cjs`; a plain `npx sequelize-cli` will not find our config.
 - Seeders are not recorded, so each one must be **idempotent** (upsert / `ON CONFLICT`).
 
-Database conventions: UUID primary keys, snake_case tables and columns (`underscored: true`), `created_at`/`updated_at` TIMESTAMPTZ, FKs with explicit `ON DELETE` behaviour, CHECK constraints for enums (`frequency_type`, weekday 1–7, `target_per_week` 1–7), and indexes on `workspace_id`, `habit_id`, `completion_date`, `(user_id, read_at)`.
+Database conventions: UUID primary keys (`gen_random_uuid()` from pgcrypto, enabled by the first migration), snake_case tables and columns (`underscored: true`), `created_at`/`updated_at` TIMESTAMPTZ with `DEFAULT now()`, FKs with explicit `ON DELETE` behaviour (ADR-025), enum-like columns as `VARCHAR` + CHECK, never native `ENUM` (ADR-024), and indexes on `workspace_id`, `habit_id`, `completion_date`, `(user_id, read_at)`. Full list: [docs/ERD.md](docs/ERD.md).
+- One migration per table. Each runs in a transaction and **names every constraint and index** (`<table>_<rule>`), so a DB error says which rule failed.
+- A CHECK on a nullable column must handle NULL explicitly: a CHECK that evaluates to NULL **passes** (e.g. `target_per_week IS NOT NULL AND target_per_week BETWEEN 1 AND 7`).
+- Seeders: `*-plans.cjs` runs everywhere (upsert on `code`). `*-demo-data.cjs` runs only in development, throws in production and is a no-op in test (ADR-028). Demo login: `demo@habitflow.local` / `habitflow-demo`.
 
 ---
 
@@ -217,7 +220,8 @@ Database conventions: UUID primary keys, snake_case tables and columns (`undersc
   - `setup/setupAfterEnv.js` closes the pool after each file.
   - Call `truncateAllTables({ except })` from `helpers/db.js` in `beforeEach` of any DB-writing test.
   - Files run serially (`maxWorkers: 1`) because they share one database.
-  - Build apps with `createApp({ db })` to inject fakes. Use `unit/` for pure logic and `integration/` for HTTP and DB tests.
+  - `helpers/factories.js` inserts valid rows (`createUser`, `createUserWithWorkspace`, `createHabit`) so tests only spell out the fields they care about.
+  - Build apps with `createApp({ db })` to inject fakes. Use `unit/` for pure logic, `integration/` for HTTP tests, and `db/` for schema, model and seeder tests. To test a DB constraint rather than the model validator in front of it, pass `{ validate: false }` to `create()`.
 - Native ESM in Jest: `npm test` sets `NODE_OPTIONS=--experimental-vm-modules`. The `jest` object is not a global under ESM (`describe`, `it` and `expect` are). Import it from `@jest/globals` if needed.
 - Formatting follows `.editorconfig` (2 spaces, LF, UTF-8).
 - **Comments are written for junior developers.** Every source and test file starts with a header comment saying what the file is for and how it fits the request flow. Exported functions get JSDoc (purpose, params, return). Non-obvious lines get a short comment explaining *why*: security rules, Express/Zod/Sequelize quirks, safety guards. Don't comment what the code already says plainly.
@@ -242,8 +246,8 @@ Database conventions: UUID primary keys, snake_case tables and columns (`undersc
 | Tests (migrates test DB first) | `npm test` · watch: `npm run test:watch` · one file: `npm test -- tests/unit/env.test.js` |
 | Lint | `npm run lint` |
 | Format / check formatting | `npm run format` / `npm run format:check` |
-| Migrate dev DB / undo last | `npm run db:migrate` / `npm run db:migrate:undo` |
-| Seed dev DB (idempotent) | `npm run db:seed` |
+| Migrate dev DB / undo last / undo all | `npm run db:migrate` / `npm run db:migrate:undo` / `npm run db:migrate:undo:all` |
+| Seed dev DB (idempotent: plans + demo data) | `npm run db:seed` → log in as `demo@habitflow.local` / `habitflow-demo` |
 | Reset **test** DB (undo all, migrate, seed) | `npm run db:reset` |
 | Any other sequelize-cli command | `npm run sequelize -- <command>`, e.g. `npm run sequelize -- migration:generate --name create-users` (then rename the file to `.cjs`) |
 | Frontend dev / lint / tests | _(added in a later phase)_ |
@@ -267,3 +271,4 @@ Database conventions: UUID primary keys, snake_case tables and columns (`undersc
 |---|---|
 | 0 | Repository scaffold, docker-compose Postgres 16 (dev + test DBs), CLAUDE.md, DECISIONS.md, README. No feature code. Verified: `docker compose up -d` → healthy; both DBs exist. §3.1 rules approved. |
 | 1 | Backend foundation: Zod-validated env, shared DB config, sequelize-cli wiring (.cjs), app/server split with graceful shutdown, helmet/cors/json/cookie-parser, pino-http with request IDs and redaction, validate(), AppError family, central error handler + 404, rate-limiter factory, `GET /api/v1/health`, Jest ESM harness (migrate once, truncate helper), ESLint + Prettier. 46 tests passing. No feature endpoints. |
+| 2 | Database schema: 11 migrations (users, sessions, plans, workspaces, workspace_members, workspace_subscriptions, habits, habit_schedule_days, habit_completions, habit_reminders, notifications) with named CHECK/UNIQUE constraints, partial unique index (one personal workspace per owner) and access-path indexes. 11 models + associations, User password scopes. Seeders: plans (free = 10 active habits, pro unlimited and not purchasable) and dev-only demo data. Test factories and `tests/db/` (constraints, cascades, model scopes/associations, seeders). docs/ERD.md. ADR-024 to ADR-028. Verified: migrate → undo:all → migrate on a fresh DB, seeders idempotent, 88 tests passing. No endpoints. |

@@ -18,6 +18,7 @@
     "format:check": "prettier --check .",
     "db:migrate": "sequelize-cli --options-path .sequelizerc.cjs db:migrate",
     "db:migrate:undo": "sequelize-cli --options-path .sequelizerc.cjs db:migrate:undo",
+    "db:migrate:undo:all": "sequelize-cli --options-path .sequelizerc.cjs db:migrate:undo:all",
     "db:seed": "sequelize-cli --options-path .sequelizerc.cjs db:seed:all",
     "db:reset": "cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:migrate:undo:all && cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:migrate && cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:seed:all",
     "sequelize": "sequelize-cli --options-path .sequelizerc.cjs"

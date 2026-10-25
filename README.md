@@ -5,6 +5,7 @@ HabitFlow is a habit-tracking SaaS. You create recurring habits (daily, selected
 - Product requirements: [docs/HabitFlow_PRD.md](docs/HabitFlow_PRD.md)
 - Engineering rules and decisions (source of truth): [CLAUDE.md](CLAUDE.md)
 - Decision log: [docs/DECISIONS.md](docs/DECISIONS.md)
+- Database schema (ERD): [docs/ERD.md](docs/ERD.md)
 
 ## Repository layout
 
@@ -54,7 +55,7 @@ npm install
 cp .env.example .env     # set DB_PASSWORD and TEST_DATABASE_URL to match the root .env;
                          # DB_PORT must equal POSTGRES_PORT
 npm run db:migrate
-npm run db:seed
+npm run db:seed          # plans + demo data (login: demo@habitflow.local / habitflow-demo)
 npm run dev              # http://localhost:3000/api/v1/health
 ```
 

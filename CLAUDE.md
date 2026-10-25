@@ -41,10 +41,11 @@ Missing a day must never produce punitive feedback. Core tracking stays useful o
 
 | Layer | Technology |
 |---|---|
-| Frontend | React (Vite), React Router, TanStack Query, Tailwind CSS, Recharts |
+| Frontend | **JavaScript** (no TypeScript). React 19 + Vite, React Router 7, TanStack Query 5, Tailwind CSS 4, Recharts, axios, react-hook-form + Zod (`@hookform/resolvers` 5.x), Luxon, clsx, lucide-react (ADR-045) |
 | Backend | Node ≥ 20 (exact LTS pin pending), Express 5, PostgreSQL 16, Sequelize + sequelize-cli (pg, pg-hstore), Zod 4, Luxon, bcrypt, pino + pino-http, helmet, cors, cookie-parser, express-rate-limit, dotenv, node-cron |
-| Testing | Jest + Supertest (backend), Vitest + React Testing Library (frontend), Playwright (E2E) |
+| Testing | Jest + Supertest (backend), Vitest + React Testing Library + jest-dom + MSW (frontend), Playwright (E2E) |
 | Backend tooling | nodemon, ESLint (flat config: @eslint/js, globals, eslint-config-prettier), Prettier, cross-env |
+| Frontend tooling | ESLint (flat config + eslint-plugin-react-hooks), Prettier, jsdom |
 | Local infra | Docker Compose (PostgreSQL 16, databases `habitflow_dev` and `habitflow_test`) |
 
 Do not add dependencies outside this list without recording the decision in `docs/DECISIONS.md`.
@@ -260,6 +261,37 @@ CSRF runs before validation so a forged request learns nothing from validation m
 
 ---
 
+## 4.2 Frontend structure (`frontend/`)
+
+```
+src/
+  main.jsx          providers: AppErrorBoundary > ThemeProvider > QueryClientProvider > ToastProvider > App
+  App.jsx           route table (exported as `routes` for tests) + RootLayout (AuthProvider)
+  components/ui/    design system: Button, IconButton, Input, Textarea, Select, Checkbox, Label,
+                    FormField, Card, Badge, Skeleton, EmptyState, ErrorState, Spinner, Modal,
+                    ConfirmDialog, Toast (useToast), Tabs, DropdownMenu (import from components/ui)
+  components/layout AppShell (sidebar / bottom nav / top bar / skip link), AuthLayout, PageHeader, UserMenu
+  features/<name>/  feature code: api.js (calls), components, hooks (auth, today, notifications, habits, analytics, settings)
+  pages/            route-level pages composing features
+  services/         apiClient.js (the ONE axios instance)
+  hooks/            useFocusTrap, usePageTitle
+  lib/              cn, cookies, forms (applyServerErrors), queryClient (+ queryKeys), redirect (safeReturnTo), theme, timezones
+  styles/index.css  Tailwind import + design tokens
+  test/             setup.js, server.js (MSW fake API + `backend` session state), renderApp.jsx
+```
+
+**Rules**
+- **All HTTP goes through `services/apiClient.js`** (`api.get/post/...`). Never call `fetch`/`axios` directly; never set CSRF or workspace headers by hand. Errors are `ApiError { status, code, message, details }`; switch on `code`, show `message`.
+- **Server state lives in TanStack Query.** Shared keys are in `lib/queryClient.js` (`queryKeys`). Auth = the `['auth','me']` query via `useAuth()` (`status`: loading | authenticated | anonymous). Don't copy server data into React state.
+- **Forms:** react-hook-form + a Zod schema mirroring the backend rules + `FormField` render prop. Show server errors with `applyServerErrors(error, setError, { fields, codeToField })`: field details go under fields, anything else in `errors.root.server`.
+- **Routing:** protected pages are children of `ProtectedRoute` + `AppShell`; `/login` and `/signup` sit under `PublicOnlyRoute`. Redirect targets always go through `safeReturnTo()` (same-site paths only).
+- **Session loss:** on 401 `UNAUTHENTICATED` the apiClient calls AuthProvider's handler, which acts only if a user was logged in: it clears cached data and navigates to `/login?returnTo=<current page>`.
+- **Design tokens:** use the semantic classes (`bg-surface`, `text-fg`, `text-fg-muted`, `border-border`, `bg-status-completed-soft`, `text-status-missed`, `text-danger`...) instead of raw palette colours. Habit status palette: completed = green, pending = neutral, **missed = soft stone, never red**, not scheduled = faint grey. Red (`danger`) is only for destructive actions and form errors. Dark mode is the `dark` class on `<html>` (`useTheme()`).
+- **Accessibility (required):** use the `components/ui` primitives (they handle keyboard, focus and ARIA); every icon-only button has a `label`; every page renders a `PageHeader` (one `<h1>` and the document title); never convey state by colour alone; interactive custom widgets follow the WAI-ARIA Authoring Practices (see Modal, DropdownMenu, Tabs).
+- **Tests:** Vitest + RTL + MSW. Query by role or label (`getByRole('button', { name })`), which doubles as an accessibility check. Render the real app with `renderApp(path)`; set `backend.loggedIn = true` for an authenticated user; override one endpoint with `server.use(http.get(...))`. Unhandled requests fail the test.
+
+---
+
 ## 5. API conventions
 
 - All routes are prefixed `/api/v1`.
@@ -331,7 +363,12 @@ CSRF runs before validation so a forged request learns nothing from validation m
 | Seed dev DB (idempotent: plans + demo data) | `npm run db:seed` → log in as `demo@habitflow.local` / `habitflow-demo` |
 | Reset **test** DB (undo all, migrate, seed) | `npm run db:reset` |
 | Any other sequelize-cli command | `npm run sequelize -- <command>`, e.g. `npm run sequelize -- migration:generate --name create-users` (then rename the file to `.cjs`) |
-| Frontend dev / lint / tests | _(added in a later phase)_ |
+| **Frontend** (run inside `frontend/`) | |
+| Install deps | `npm install` |
+| Dev server | `npm run dev` → http://localhost:5173 (proxies `/api` to http://localhost:3000; override with `BACKEND_URL`). Start the backend first. |
+| Tests / watch | `npm test` · `npm run test:watch` |
+| Lint / format | `npm run lint` · `npm run format` / `npm run format:check` |
+| Production build / preview | `npm run build` (→ `dist/`) · `npm run preview` |
 | E2E tests (Playwright) | _(added in a later phase)_ |
 
 ---
@@ -358,3 +395,4 @@ CSRF runs before validation so a forged request learns nothing from validation m
 | 5 | Completions and streaks: pure `domain/streaks.js` (day/week streaks, pending vs missed, prorated first week, day status, week progress) with 51 hand-written cases plus a randomized cross-check against a naive reference implementation (600 histories; confirmed to catch planted bugs). `completionService` (race-safe idempotent mark, idempotent unmark, history), `todayService` (dashboard in two queries, verified by a query-counting test), real streaks on `GET /habits/:id`. Endpoints: PUT/DELETE completions, GET /completions, GET /today. docs/STREAK_RULES.md. ADR-038 to ADR-040. |
 | 6 | Analytics: pure `domain/analytics.js` (`scheduledInstances`, `completionRate`, `summarize`, `habitHistory`), `analyticsService` (two queries per endpoint, verified by a query-counting test). Endpoints: `GET /analytics/summary`, `GET /analytics/heatmap`, `GET /habits/:id/history`. Integration tests check a hand-calculated fixture whose maths is documented in the test header. docs/API.md with real example responses; STREAK_RULES.md §8 (rates). ADR-041. |
 | 7 | Reminders and notifications: reminder CRUD (`/habits/:id/reminders`, `/reminders/:id`), delivery abstraction (`NotificationChannel`, `InAppChannel`, `dispatchNotification` with preferences and DB dedupe), reminder scheduler (Luxon per-timezone matching, 4 queries per tick, exactly-once) and daily housekeeping, both started only from `server.js` (`REMINDERS_ENABLED` env var), streak milestone notifications, notification inbox endpoints, `isDue` on `/today`. Removed `jobs/sessionCleanup.js` (now part of housekeeping). docs/API.md (every endpoint) and docs/openapi.yaml (34 operations, checked against the route files). ADR-042 to ADR-044. 492 tests passing. **Backend feature-complete for the first release.** |
+| 8 | Frontend foundation: Vite + React (JavaScript), Tailwind 4 design tokens (light/dark, never-red "missed"), accessible UI kit (Button, IconButton, form controls + FormField, Card, Badge, Skeleton, Empty/ErrorState, Spinner, Modal with focus trap, ConfirmDialog, Toasts, Tabs, DropdownMenu), apiClient (CSRF, workspace header, ApiError, 401 handling), AuthProvider/useAuth on `/auth/me`, login and signup (strength hint, detected timezone, server errors inline), Protected/PublicOnly routes with safe `returnTo`, responsive AppShell (sidebar, bottom nav, skip link, notification bell with unread count, user menu), Today page (loads `/today`, empty state), placeholder pages, 404 and error boundaries. 27 frontend tests (Vitest + RTL + MSW). Verified end to end through the Vite proxy against the real API (signup → empty Today → refresh → logout). ADR-045, ADR-046. Follow-up: lazy-load route pages (the bundle is a single 625 kB / 199 kB gzip chunk). |

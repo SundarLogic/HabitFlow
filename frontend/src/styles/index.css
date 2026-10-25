@@ -1,0 +1,127 @@
+/*
+ * HabitFlow design tokens (Tailwind CSS v4: the theme is configured here, in CSS).
+ *
+ * Use the SEMANTIC classes in components (bg-surface, text-fg, border-border,
+ * bg-status-completed, ...), not raw palette colours, so light/dark mode and future re-theming
+ * only touch this file.
+ *
+ * Habit status colours follow the PRD principle "missing a day is never punitive":
+ *   completed      green: a quiet celebration
+ *   pending        neutral slate: still open, no pressure
+ *   missed         soft stone: acknowledged, not alarming (NEVER red)
+ *   not-scheduled  faint gray: simply not a day for this habit
+ * Red (danger) is reserved for destructive actions and form errors.
+ */
+@import 'tailwindcss';
+
+/* Dark mode is toggled with a `dark` class on <html> (see lib/theme.js), not only the OS setting. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+
+  /* Brand palette (indigo). */
+  --color-brand-50: #eef2ff;
+  --color-brand-100: #e0e7ff;
+  --color-brand-200: #c7d2fe;
+  --color-brand-300: #a5b4fc;
+  --color-brand-400: #818cf8;
+  --color-brand-500: #6366f1;
+  --color-brand-600: #4f46e5;
+  --color-brand-700: #4338ca;
+  --color-brand-800: #3730a3;
+  --color-brand-900: #312e81;
+}
+
+/* Semantic tokens: the values switch with the theme, the class names never do. */
+@theme inline {
+  --color-surface: var(--hf-surface);
+  --color-surface-muted: var(--hf-surface-muted);
+  --color-surface-raised: var(--hf-surface-raised);
+  --color-fg: var(--hf-fg);
+  --color-fg-muted: var(--hf-fg-muted);
+  --color-border: var(--hf-border);
+  --color-ring: var(--hf-ring);
+
+  --color-status-completed: var(--hf-completed);
+  --color-status-completed-soft: var(--hf-completed-soft);
+  --color-status-pending: var(--hf-pending);
+  --color-status-pending-soft: var(--hf-pending-soft);
+  --color-status-missed: var(--hf-missed);
+  --color-status-missed-soft: var(--hf-missed-soft);
+  --color-status-unscheduled: var(--hf-unscheduled);
+  --color-status-unscheduled-soft: var(--hf-unscheduled-soft);
+
+  --color-danger: var(--hf-danger);
+  --color-danger-soft: var(--hf-danger-soft);
+}
+
+:root {
+  --hf-surface: #f8fafc;
+  --hf-surface-muted: #f1f5f9;
+  --hf-surface-raised: #ffffff;
+  --hf-fg: #0f172a;
+  --hf-fg-muted: #475569; /* 7.5:1 on white: readable secondary text */
+  --hf-border: #e2e8f0;
+  --hf-ring: #4f46e5;
+
+  --hf-completed: #047857; /* emerald-700: AA contrast on white for text and icons */
+  --hf-completed-soft: #d1fae5;
+  --hf-pending: #475569;
+  --hf-pending-soft: #f1f5f9;
+  --hf-missed: #78716c; /* stone-500 */
+  --hf-missed-soft: #f5f5f4;
+  --hf-unscheduled: #94a3b8;
+  --hf-unscheduled-soft: #f8fafc;
+
+  --hf-danger: #be123c; /* rose-700 */
+  --hf-danger-soft: #ffe4e6;
+  color-scheme: light;
+}
+
+.dark {
+  --hf-surface: #0b1120;
+  --hf-surface-muted: #111827;
+  --hf-surface-raised: #1e293b;
+  --hf-fg: #f1f5f9;
+  --hf-fg-muted: #cbd5e1;
+  --hf-border: #334155;
+  --hf-ring: #a5b4fc;
+
+  --hf-completed: #34d399;
+  --hf-completed-soft: #064e3b;
+  --hf-pending: #cbd5e1;
+  --hf-pending-soft: #1e293b;
+  --hf-missed: #a8a29e;
+  --hf-missed-soft: #292524;
+  --hf-unscheduled: #64748b;
+  --hf-unscheduled-soft: #0f172a;
+
+  --hf-danger: #fb7185;
+  --hf-danger-soft: #4c0519;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    @apply bg-surface text-fg antialiased;
+  }
+  body {
+    @apply min-h-screen font-sans;
+  }
+  /* One visible focus style for every keyboard-focusable element (WCAG 2.4.7). */
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-ring;
+  }
+}
+
+/* Honour "reduce motion": no spinners spinning fast, no sliding toasts. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -12,7 +12,7 @@ HabitFlow is a habit-tracking SaaS. You create recurring habits (daily, selected
 ```
 .
 ├── backend/              Node.js + Express API (scaffold)
-├── frontend/             React (Vite) app (not started)
+├── frontend/             React (Vite) web app
 ├── docker/postgres/init/ Postgres init scripts (creates dev + test DBs)
 ├── docs/                 PRD and decision records
 ├── docker-compose.yml    Local PostgreSQL 16
@@ -69,7 +69,15 @@ Expected health response:
 
 ## 3. Frontend setup
 
-_Coming in a later phase._
+```bash
+cd frontend
+npm install
+npm run dev              # http://localhost:5173 (start the backend first)
+```
+
+The dev server proxies `/api` to the backend on port 3000, so the browser talks to one origin and the login cookies just work. If your API runs elsewhere: `BACKEND_URL=http://localhost:4000 npm run dev`.
+
+Sign up at http://localhost:5173/signup, or log in with the demo account after `npm run db:seed` in `backend/`: `demo@habitflow.local` / `habitflow-demo`.
 
 ## 4. Running tests
 
@@ -81,6 +89,14 @@ npm test            # migrates the test DB, then runs unit + integration tests
 npm run lint
 ```
 
-Frontend (Vitest + RTL) and E2E (Playwright): _coming in later phases._
+Frontend (Vitest + React Testing Library + MSW; no backend needed):
+
+```bash
+cd frontend
+npm test
+npm run lint
+```
+
+E2E (Playwright): _coming in a later phase._
 
 See [CLAUDE.md §7](CLAUDE.md) for the full command list.

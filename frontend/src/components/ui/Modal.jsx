@@ -26,6 +26,8 @@ import { Button, IconButton } from './Button.jsx';
  * @param {import('react').ReactNode} [props.footer] usually action buttons
  * @param {'sm'|'md'|'lg'} [props.size='md']
  * @param {'dialog'|'alertdialog'} [props.role='dialog'] alertdialog for confirmations
+ * @param {boolean} [props.fullScreenOnMobile] fill the screen below the `sm` breakpoint (long
+ *   forms); the body scrolls while the title and footer stay visible
  */
 export function Modal({
   open,
@@ -35,6 +37,7 @@ export function Modal({
   footer,
   size = 'md',
   role = 'dialog',
+  fullScreenOnMobile = false,
   children,
 }) {
   const titleId = useId();
@@ -55,7 +58,12 @@ export function Modal({
 
   const width = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl' }[size];
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
+    <div
+      className={cn(
+        'fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4',
+        fullScreenOnMobile ? 'p-0' : 'p-4',
+      )}
+    >
       {/* Backdrop: a mouse convenience; keyboard users close with Escape or the button. */}
       <div aria-hidden="true" className="absolute inset-0 bg-black/50" onClick={onClose} />
       <div
@@ -66,8 +74,10 @@ export function Modal({
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
         className={cn(
-          'relative w-full rounded-2xl border border-border bg-surface-raised shadow-xl',
+          'relative flex max-h-[90vh] w-full flex-col rounded-2xl border border-border bg-surface-raised shadow-xl',
           width,
+          fullScreenOnMobile &&
+            'max-sm:h-full max-sm:max-h-none max-sm:rounded-none max-sm:border-0',
         )}
       >
         <div className="flex items-start justify-between gap-4 p-5 pb-0">
@@ -83,7 +93,7 @@ export function Modal({
           </div>
           <IconButton label="Close dialog" icon={X} size="sm" onClick={onClose} />
         </div>
-        {children && <div className="p-5">{children}</div>}
+        {children && <div className="min-h-0 flex-1 overflow-y-auto p-5">{children}</div>}
         {footer && (
           <div className="flex flex-col-reverse gap-2 border-t border-border p-4 sm:flex-row sm:justify-end">
             {footer}

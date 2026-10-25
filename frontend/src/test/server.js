@@ -12,6 +12,7 @@
  */
 import { HttpResponse, http } from 'msw';
 import { setupServer } from 'msw/node';
+import { habitHandlers } from './fakeHabits.js';
 
 export const ME = {
   user: {
@@ -34,13 +35,6 @@ export const ME = {
   ],
   activeWorkspaceId: 'cc15dd7f-0000-4000-8000-000000000002',
   plan: { code: 'free', limits: { maxActiveHabits: 10, historyDays: null } },
-};
-
-export const EMPTY_TODAY = {
-  date: '2026-10-28',
-  today: '2026-10-28',
-  habits: [],
-  summary: { scheduled: 0, completed: 0, remaining: 0, percent: null },
 };
 
 /** Builds the API's error body. */
@@ -81,12 +75,11 @@ export const handlers = [
     backend.loggedIn = false;
     return new HttpResponse(null, { status: 204 });
   }),
-  http.get('/api/v1/today', () =>
-    backend.loggedIn ? HttpResponse.json(EMPTY_TODAY) : unauthenticated(),
-  ),
   http.get('/api/v1/notifications/unread-count', () =>
     backend.loggedIn ? HttpResponse.json({ unreadCount: 0 }) : unauthenticated(),
   ),
+  // Habits, completions, /today and analytics: a small stateful fake (fakeHabits.js).
+  ...habitHandlers,
 ];
 
 export const server = setupServer(...handlers);

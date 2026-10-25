@@ -23,6 +23,8 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Unit/integration tests only; Playwright's e2e/*.spec.js files run with `npm run test:e2e`.
+    include: ['src/**/*.test.{js,jsx}'],
     // describe/it/expect without imports, and automatic DOM cleanup after each test.
     globals: true,
     setupFiles: ['./src/test/setup.js'],

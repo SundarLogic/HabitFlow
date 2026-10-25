@@ -18,7 +18,7 @@ describe('route guards', () => {
     backend.loggedIn = true;
     const first = renderApp('/');
     expect(await screen.findByRole('heading', { name: 'Today' })).toBeInTheDocument();
-    expect(await screen.findByText('Nothing scheduled today')).toBeInTheDocument();
+    expect(await screen.findByText("Let's build your first habit")).toBeInTheDocument();
     first.unmount();
 
     // A "refresh" = a brand-new app with an empty cache; the session (cookie) still exists.
@@ -151,7 +151,7 @@ describe('signup form', () => {
     await user.type(screen.getByLabelText(/^Password/), 'correct-horse-42');
     await user.click(screen.getByRole('button', { name: 'Create account' }));
 
-    expect(await screen.findByText('Nothing scheduled today')).toBeInTheDocument();
+    expect(await screen.findByText("Let's build your first habit")).toBeInTheDocument();
     expect(currentUrl(router)).toBe('/');
   });
 });

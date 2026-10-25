@@ -97,6 +97,12 @@ npm test
 npm run lint
 ```
 
-E2E (Playwright): _coming in a later phase._
+End-to-end (Playwright, real browser + real API, desktop and 375 px phone; Postgres must be running):
+
+```bash
+cd frontend
+npx playwright install chromium   # first time only
+npm run test:e2e                  # starts its own API (:3100, test DB) and web server (:5174)
+```
 
 See [CLAUDE.md §7](CLAUDE.md) for the full command list.

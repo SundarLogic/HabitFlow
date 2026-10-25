@@ -36,7 +36,7 @@ function ToastItem({ toast, onDismiss }) {
 
   return (
     <li
-      className="pointer-events-auto flex w-full items-start gap-3 rounded-xl border border-border bg-surface-raised p-4 shadow-lg"
+      className="pointer-events-auto flex w-full items-center gap-3 rounded-xl border border-border bg-surface-raised px-3 py-2 shadow-lg sm:items-start sm:p-4"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
@@ -68,7 +68,7 @@ export function ToastProvider({ children }) {
   const show = useCallback(({ title, description, tone = 'info', duration = 5000 }) => {
     nextId += 1;
     const toast = { id: nextId, title, description, tone, duration };
-    setToasts((current) => [...current.slice(-3), toast]); // at most 4 on screen
+    setToasts((current) => [...current.slice(-2), toast]); // at most 3 on screen
     return toast.id;
   }, []);
 
@@ -90,7 +90,9 @@ export function ToastProvider({ children }) {
   return (
     <ToastContext.Provider value={api}>
       {children}
-      <div className="fixed inset-x-0 bottom-20 z-[60] flex flex-col items-center gap-2 px-4 sm:bottom-4 sm:right-4 sm:left-auto sm:w-96 sm:items-end">
+      {/* Phones: top of the screen, so toasts never cover the thumb zone (bottom nav, primary
+          buttons, full-screen dialog footers). Larger screens: bottom-right corner. */}
+      <div className="fixed inset-x-0 top-3 z-[60] flex flex-col items-center gap-2 px-4 sm:top-auto sm:right-4 sm:bottom-4 sm:left-auto sm:w-96 sm:items-end">
         <ul aria-live="assertive" aria-label="Errors" className={stack}>
           {assertive.map((toast) => (
             <ToastItem key={toast.id} toast={toast} onDismiss={dismiss} />

@@ -5,12 +5,23 @@
  */
 import { QueryClient } from '@tanstack/react-query';
 
-/** Query keys used in more than one place. */
+/**
+ * Query keys used in more than one place. Each starts with a "family" name so a whole family can
+ * be refreshed at once, e.g. invalidateQueries({ queryKey: ['habits'] }) after any habit change.
+ */
 export const queryKeys = {
   me: ['auth', 'me'],
   today: (date) => ['today', date ?? 'current'],
   unreadCount: ['notifications', 'unread-count'],
+  habits: (filters = {}) => ['habits', 'list', filters],
+  categories: ['habits', 'categories'],
+  habit: (id) => ['habit', id],
+  reminders: (habitId) => ['habit', habitId, 'reminders'],
+  analyticsSummary: (from, to) => ['analytics', 'summary', from, to],
 };
+
+/** Families refreshed after anything that changes habits or completions. */
+export const HABIT_DATA_FAMILIES = [['today'], ['habits'], ['habit'], ['analytics']];
 
 /**
  * @returns {QueryClient} a fresh client (tests create one per test)

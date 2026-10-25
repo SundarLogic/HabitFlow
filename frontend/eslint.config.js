@@ -13,7 +13,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 
 export default [
-  { ignores: ['node_modules/', 'dist/', 'coverage/', 'public/mockServiceWorker.js'] },
+  { ignores: ['node_modules/', 'dist/', 'coverage/', 'test-results/', 'playwright-report/'] },
 
   js.configs.recommended,
 
@@ -38,7 +38,7 @@ export default [
 
   // Config files and tests run in Node / Vitest.
   {
-    files: ['*.config.js', 'src/test/**', '**/*.test.{js,jsx}'],
+    files: ['*.config.js', 'src/test/**', '**/*.test.{js,jsx}', 'e2e/**'],
     languageOptions: { globals: { ...globals.node, ...globals.vitest } },
   },
 

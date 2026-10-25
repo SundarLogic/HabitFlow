@@ -9,6 +9,7 @@
  */
 import { Moon, Sun } from 'lucide-react';
 import { NavLink, Outlet } from 'react-router-dom';
+import { HabitFormProvider } from '../../features/habits/HabitFormProvider.jsx';
 import { NotificationBell } from '../../features/notifications/NotificationBell.jsx';
 import { cn } from '../../lib/cn.js';
 import { useTheme } from '../../lib/theme.jsx';
@@ -119,7 +120,10 @@ export function AppShell() {
         {/* tabIndex -1 lets the skip link move focus here; pb-20 keeps content above the bottom bar. */}
         <main id="main-content" tabIndex={-1} className="flex-1 px-4 py-6 pb-24 md:px-8 md:pb-8">
           <div className="mx-auto max-w-5xl">
-            <Outlet />
+            {/* The habit form can be opened from any page (useHabitForm). */}
+            <HabitFormProvider>
+              <Outlet />
+            </HabitFormProvider>
           </div>
         </main>
       </div>

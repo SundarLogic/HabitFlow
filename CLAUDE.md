@@ -272,12 +272,18 @@ src/
                     ConfirmDialog, Toast (useToast), Tabs, DropdownMenu (import from components/ui)
   components/layout AppShell (sidebar / bottom nav / top bar / skip link), AuthLayout, PageHeader, UserMenu
   features/<name>/  feature code: api.js (calls), components, hooks (auth, today, notifications, habits, analytics, settings)
+                    habits/: api.js (habits, completions, reminders), HabitFormModal + HabitFormProvider (useHabitForm),
+                    formSchema.js, useHabitActions, DeleteHabitDialog, schedule.js (summaries), constants (icons, colours, templates)
+                    today/: optimistic.js, useToggleCompletion, HabitRow, DateNavigator, ProgressSummary, WeeklyStrip, GetStarted
   pages/            route-level pages composing features
   services/         apiClient.js (the ONE axios instance)
-  hooks/            useFocusTrap, usePageTitle
-  lib/              cn, cookies, forms (applyServerErrors), queryClient (+ queryKeys), redirect (safeReturnTo), theme, timezones
+  hooks/            useFocusTrap, usePageTitle, useKeyboardShortcuts
+  lib/              cn, cookies, dates (todayIn(tz), addDays, ...), forms (applyServerErrors), queryClient (+ queryKeys,
+                    HABIT_DATA_FAMILIES), redirect (safeReturnTo), theme, timezones
   styles/index.css  Tailwind import + design tokens
-  test/             setup.js, server.js (MSW fake API + `backend` session state), renderApp.jsx
+  test/             setup.js, server.js (MSW fake API + `backend` session state), fakeHabits.js (stateful fake habits,
+                    completions, /today; `db`, `makeHabit`, `fakeToday`), renderApp.jsx
+e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrate + seed plans on habitflow_test)
 ```
 
 **Rules**
@@ -288,6 +294,8 @@ src/
 - **Session loss:** on 401 `UNAUTHENTICATED` the apiClient calls AuthProvider's handler, which acts only if a user was logged in: it clears cached data and navigates to `/login?returnTo=<current page>`.
 - **Design tokens:** use the semantic classes (`bg-surface`, `text-fg`, `text-fg-muted`, `border-border`, `bg-status-completed-soft`, `text-status-missed`, `text-danger`...) instead of raw palette colours. Habit status palette: completed = green, pending = neutral, **missed = soft stone, never red**, not scheduled = faint grey. Red (`danger`) is only for destructive actions and form errors. Dark mode is the `dark` class on `<html>` (`useTheme()`).
 - **Accessibility (required):** use the `components/ui` primitives (they handle keyboard, focus and ARIA); every icon-only button has a `label`; every page renders a `PageHeader` (one `<h1>` and the document title); never convey state by colour alone; interactive custom widgets follow the WAI-ARIA Authoring Practices (see Modal, DropdownMenu, Tabs).
+- **Daily loop (ADR-047):** completions are optimistic through `useToggleCompletion(habit, date)`, which is keyed per habit/date and rolls back with the inverse toggle. "Today" in the UI is always `todayIn(user.timezone)`; the viewed day is `?date=`; future days are read-only. After any habit or completion change, invalidate `HABIT_DATA_FAMILIES`. Open the habit form with `useHabitForm()` (one provider in AppShell). Toggles use `aria-pressed` with a constant label and `aria-disabled` while unavailable.
+- **E2E:** `npm run test:e2e` (Postgres must be running). It starts its own API on :3100 (test DB) and Vite on :5174, runs on desktop and at 375 px, and writes screenshots to `test-results/screens/`. Add a spec for every new end-to-end user journey.
 - **Tests:** Vitest + RTL + MSW. Query by role or label (`getByRole('button', { name })`), which doubles as an accessibility check. Render the real app with `renderApp(path)`; set `backend.loggedIn = true` for an authenticated user; override one endpoint with `server.use(http.get(...))`. Unhandled requests fail the test.
 
 ---
@@ -367,9 +375,10 @@ src/
 | Install deps | `npm install` |
 | Dev server | `npm run dev` → http://localhost:5173 (proxies `/api` to http://localhost:3000; override with `BACKEND_URL`). Start the backend first. |
 | Tests / watch | `npm test` · `npm run test:watch` |
+| E2E (Playwright) | `npm run test:e2e` (first time: `npx playwright install chromium`; needs Postgres) |
 | Lint / format | `npm run lint` · `npm run format` / `npm run format:check` |
 | Production build / preview | `npm run build` (→ `dist/`) · `npm run preview` |
-| E2E tests (Playwright) | _(added in a later phase)_ |
+| E2E tests (Playwright) | see Frontend above (`npm run test:e2e`) |
 
 ---
 
@@ -396,3 +405,4 @@ src/
 | 6 | Analytics: pure `domain/analytics.js` (`scheduledInstances`, `completionRate`, `summarize`, `habitHistory`), `analyticsService` (two queries per endpoint, verified by a query-counting test). Endpoints: `GET /analytics/summary`, `GET /analytics/heatmap`, `GET /habits/:id/history`. Integration tests check a hand-calculated fixture whose maths is documented in the test header. docs/API.md with real example responses; STREAK_RULES.md §8 (rates). ADR-041. |
 | 7 | Reminders and notifications: reminder CRUD (`/habits/:id/reminders`, `/reminders/:id`), delivery abstraction (`NotificationChannel`, `InAppChannel`, `dispatchNotification` with preferences and DB dedupe), reminder scheduler (Luxon per-timezone matching, 4 queries per tick, exactly-once) and daily housekeeping, both started only from `server.js` (`REMINDERS_ENABLED` env var), streak milestone notifications, notification inbox endpoints, `isDue` on `/today`. Removed `jobs/sessionCleanup.js` (now part of housekeeping). docs/API.md (every endpoint) and docs/openapi.yaml (34 operations, checked against the route files). ADR-042 to ADR-044. 492 tests passing. **Backend feature-complete for the first release.** |
 | 8 | Frontend foundation: Vite + React (JavaScript), Tailwind 4 design tokens (light/dark, never-red "missed"), accessible UI kit (Button, IconButton, form controls + FormField, Card, Badge, Skeleton, Empty/ErrorState, Spinner, Modal with focus trap, ConfirmDialog, Toasts, Tabs, DropdownMenu), apiClient (CSRF, workspace header, ApiError, 401 handling), AuthProvider/useAuth on `/auth/me`, login and signup (strength hint, detected timezone, server errors inline), Protected/PublicOnly routes with safe `returnTo`, responsive AppShell (sidebar, bottom nav, skip link, notification bell with unread count, user menu), Today page (loads `/today`, empty state), placeholder pages, 404 and error boundaries. 27 frontend tests (Vitest + RTL + MSW). Verified end to end through the Vite proxy against the real API (signup → empty Today → refresh → logout). ADR-045, ADR-046. Follow-up: lazy-load route pages (the bundle is a single 625 kB / 199 kB gzip chunk). |
+| 9 | Core daily experience. Today page: `?date=` navigation (buttons, date picker, ←/→, `n`), progress ring with a quiet 100% celebration, To do / Done / Not scheduled groups, optimistic toggles (aria-pressed; per-habit pending state and focus kept across group moves; inverse rollback with a toast), weekly strip, read-only future days, first-run templates. Habit form (modal / full screen on phones): details, category suggestions, colour and icon pickers, frequency segmented control with weekday chips or a times-per-week stepper, start date, reminders; Zod mirrors the API, server errors inline, friendly plan-limit message. Habits page: Active/Archived tabs, search, category filter, Edit/Archive/Restore/Delete (archive offered first), Move up/down reordering. 63 Vitest tests + Playwright E2E of the full loop on desktop and 375 px (found and fixed: a bottom toast covering the form's submit button on phones). ADR-047, ADR-048. |

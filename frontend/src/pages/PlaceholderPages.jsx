@@ -15,19 +15,6 @@ function ComingSoon({ icon, title, description }) {
   );
 }
 
-export function HabitsPage() {
-  return (
-    <>
-      <PageHeader title="Habits" description="Create and organise the habits you track." />
-      <ComingSoon
-        icon={ListChecks}
-        title="Habit management is on its way"
-        description="Soon you'll create daily, weekday and weekly-target habits here."
-      />
-    </>
-  );
-}
-
 export function HabitDetailPage() {
   const { id } = useParams();
   return (

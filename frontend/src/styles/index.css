@@ -31,6 +31,22 @@
   --color-brand-700: #4338ca;
   --color-brand-800: #3730a3;
   --color-brand-900: #312e81;
+
+  /* A small, quiet "pop-in" for celebrations (use as motion-safe:animate-pop). */
+  --animate-pop: hf-pop 0.45s ease-out;
+  @keyframes hf-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.85);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.04);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
 }
 
 /* Semantic tokens: the values switch with the theme, the class names never do. */

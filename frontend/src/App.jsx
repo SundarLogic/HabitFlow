@@ -15,7 +15,8 @@ import { AuthProvider } from './features/auth/AuthProvider.jsx';
 import { ProtectedRoute, PublicOnlyRoute } from './features/auth/RouteGuards.jsx';
 import { LoginPage, SignupPage } from './pages/AuthPages.jsx';
 import { NotFoundPage, RouteErrorPage } from './pages/ErrorPages.jsx';
-import { AnalyticsPage, HabitDetailPage, HabitsPage } from './pages/PlaceholderPages.jsx';
+import { HabitsPage } from './pages/HabitsPage.jsx';
+import { AnalyticsPage, HabitDetailPage } from './pages/PlaceholderPages.jsx';
 import { SettingsPage } from './pages/SettingsPage.jsx';
 import { TodayPage } from './pages/TodayPage.jsx';
 

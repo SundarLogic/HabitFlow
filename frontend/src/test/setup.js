@@ -7,6 +7,7 @@
  *   - resets handlers, the fake session and cookies between tests so tests stay independent.
  */
 import '@testing-library/jest-dom/vitest';
+import { resetDb } from './fakeHabits.js';
 import { backend, server } from './server.js';
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
@@ -14,6 +15,7 @@ beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => {
   server.resetHandlers();
   backend.loggedIn = false;
+  resetDb();
   // Expire every cookie set during the test.
   for (const cookie of document.cookie.split('; ').filter(Boolean)) {
     const name = cookie.split('=')[0];

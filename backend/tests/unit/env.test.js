@@ -31,6 +31,7 @@ describe('parseEnv', () => {
       DB_PORT: 5432,
       SESSION_TTL_DAYS: 30,
       COOKIE_SECURE: false,
+      REMINDERS_ENABLED: true,
       LOG_LEVEL: 'info',
       CLIENT_ORIGINS: ['http://localhost:5173'],
     });
@@ -54,6 +55,7 @@ describe('parseEnv', () => {
     ['PORT', 'abc'],
     ['SESSION_TTL_DAYS', '0'],
     ['COOKIE_SECURE', 'yes'],
+    ['REMINDERS_ENABLED', 'on'],
     ['LOG_LEVEL', 'verbose'],
     ['NODE_ENV', 'staging'],
     ['DATABASE_URL', 'mysql://x@localhost/db'],

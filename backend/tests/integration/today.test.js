@@ -141,6 +141,7 @@ describe('content and summary (New York user, today = Sunday 2026-10-25)', () =>
       completed: true,
       completion: expect.objectContaining({ completionDate: '2026-10-25', habitId: daily.id }),
       status: 'completed',
+      isDue: false, // no reminders in this fixture
       streak: { current: 4, longest: 4, unit: 'days' },
     });
     // Run: week of Oct 12 met (3), week of Oct 19 has 2 of 3 and ends tonight -> still pending.
@@ -149,6 +150,7 @@ describe('content and summary (New York user, today = Sunday 2026-10-25)', () =>
       completed: false,
       completion: null,
       status: 'pending',
+      isDue: false,
       streak: { current: 1, longest: 1, unit: 'weeks' },
       weekProgress: { done: 2, target: 3 },
     });

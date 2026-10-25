@@ -12,12 +12,14 @@ import { Router } from 'express';
 import * as analyticsController from '../controllers/analyticsController.js';
 import * as completionController from '../controllers/completionController.js';
 import * as habitController from '../controllers/habitController.js';
+import * as reminderController from '../controllers/reminderController.js';
 import { requireAuth } from '../middleware/auth.js';
 import { csrfProtection } from '../middleware/csrf.js';
 import { validate } from '../middleware/validate.js';
 import { resolveWorkspace } from '../middleware/workspace.js';
 import { habitHistoryQuery } from '../validators/analyticsValidators.js';
 import { completionParams, markCompletionBody } from '../validators/completionValidators.js';
+import { createReminderBody } from '../validators/reminderValidators.js';
 import {
   createHabitBody,
   deleteHabitQuery,
@@ -66,4 +68,12 @@ habitRouter.delete(
   '/:id/completions/:date',
   validate({ params: completionParams }),
   completionController.unmark,
+);
+
+// Reminders of a habit (the requesting user's). Editing/deleting one: /reminders/:id.
+habitRouter.get('/:id/reminders', validate({ params: habitIdParams }), reminderController.list);
+habitRouter.post(
+  '/:id/reminders',
+  validate({ params: habitIdParams, body: createReminderBody }),
+  reminderController.create,
 );

@@ -118,3 +118,13 @@ export function eachDay(from, to) {
   for (let day = from; day <= to; day = addDays(day, 1)) days.push(day);
   return days;
 }
+
+/**
+ * The current wall-clock time in a timezone as 'HH:mm' (24-hour), e.g. for reminder times.
+ * @param {string} timezone IANA zone
+ * @param {() => Date} now clock
+ * @returns {string}
+ */
+export function localTimeIn(timezone, now) {
+  return DateTime.fromJSDate(now()).setZone(timezone).toFormat('HH:mm');
+}

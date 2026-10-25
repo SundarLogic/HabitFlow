@@ -13,6 +13,8 @@ import { createAuthRouter } from './authRoutes.js';
 import { completionRouter, todayRouter } from './completionRoutes.js';
 import { habitRouter } from './habitRoutes.js';
 import { healthRouter } from './healthRoutes.js';
+import { notificationRouter } from './notificationRoutes.js';
+import { reminderRouter } from './reminderRoutes.js';
 import { userRouter } from './userRoutes.js';
 import { workspaceRouter } from './workspaceRoutes.js';
 
@@ -30,5 +32,7 @@ export function createApiRouter({ authRateLimit }) {
   router.use('/completions', completionRouter);
   router.use('/today', todayRouter);
   router.use('/analytics', analyticsRouter);
+  router.use('/reminders', reminderRouter);
+  router.use('/notifications', notificationRouter);
   return router;
 }

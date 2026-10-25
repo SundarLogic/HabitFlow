@@ -215,7 +215,7 @@ export function logoutAll(userId, { exceptSessionId, transaction } = {}) {
 }
 
 /**
- * Deletes every expired session. Run nightly by the session-cleanup job (jobs/sessionCleanup.js).
+ * Deletes every expired session. Run daily by the housekeeping job (jobs/housekeeping.js).
  * Expired sessions are already rejected on use; this only keeps the table small.
  * @param {{ now?: () => Date }} [options]
  * @returns {Promise<number>} number of sessions deleted

@@ -160,8 +160,10 @@ function dayStreaks(input, counted) {
       ? today
       : previousScheduledDay(habit, scheduleDays, today);
   let current = 0;
+  let currentStart = null; // first day of the current run (for milestone de-duplication)
   while (cursor !== null && counted.has(cursor)) {
     current += 1;
+    currentStart = cursor;
     cursor = previousScheduledDay(habit, scheduleDays, cursor);
   }
 
@@ -176,13 +178,13 @@ function dayStreaks(input, counted) {
     longest = Math.max(longest, run);
     previous = date;
   }
-  return { current, longest };
+  return { current, longest, currentStart };
 }
 
 /** Streaks counted in ISO WEEKS (weekly_target habits). */
 function weekStreaks(input, counted) {
   const { habit, today } = input;
-  if (today < habit.startDate) return { current: 0, longest: 0 };
+  if (today < habit.startDate) return { current: 0, longest: 0, currentStart: null };
 
   const counts = countsPerWeek(counted);
   const met = (weekStart) => (counts.get(weekStart) ?? 0) >= weekTarget(habit, weekStart);
@@ -192,9 +194,11 @@ function weekStreaks(input, counted) {
   // Current: +1 if THIS week already met its target; an unmet current week is pending and
   // simply not counted. Then count met weeks backwards until the first missed one.
   let current = met(currentWeek) ? 1 : 0;
+  let currentStart = current ? currentWeek : null; // Monday of the run's first week
   for (let week = addDays(currentWeek, -7); week >= firstWeek; week = addDays(week, -7)) {
     if (!met(week)) break;
     current += 1;
+    currentStart = week;
   }
 
   // Longest: longest run of consecutive met weeks from the first week to this week.
@@ -204,7 +208,23 @@ function weekStreaks(input, counted) {
     run = met(week) ? run + 1 : 0;
     longest = Math.max(longest, run);
   }
-  return { current, longest };
+  return { current, longest, currentStart };
+}
+
+/**
+ * Where the CURRENT streak began: its first day (daily / weekdays) or the Monday of its first
+ * week (weekly_target), or null when there is no current streak. It identifies "this run" so a
+ * milestone is announced once per run, however often the same day is marked and unmarked.
+ * @param {StreakInput} input
+ * @returns {string | null}
+ */
+export function currentRunStart(input) {
+  const counted = countedCompletions(input);
+  const streaks =
+    input.habit.frequencyType === 'weekly_target'
+      ? weekStreaks(input, counted)
+      : dayStreaks(input, counted);
+  return streaks.currentStart;
 }
 
 /**
@@ -219,12 +239,9 @@ export function computeStreak(input) {
   const status = dayStatus({ ...input, date: input.today });
 
   if (input.habit.frequencyType === 'weekly_target') {
-    return {
-      ...weekStreaks(input, counted),
-      unit: 'weeks',
-      status,
-      weekProgress: weekProgress(input),
-    };
+    const { current, longest } = weekStreaks(input, counted);
+    return { current, longest, unit: 'weeks', status, weekProgress: weekProgress(input) };
   }
-  return { ...dayStreaks(input, counted), unit: 'days', status };
+  const { current, longest } = dayStreaks(input, counted);
+  return { current, longest, unit: 'days', status };
 }

@@ -1,0 +1,1260 @@
+openapi: 3.0.3
+info:
+  title: HabitFlow API
+  version: 1.0.0
+  description: |
+    REST/JSON API of HabitFlow (first release). Human-readable guide with more examples:
+    docs/API.md. Business rules: CLAUDE.md §3.1 and docs/STREAK_RULES.md.
+
+    - Browser clients authenticate with the `hf_session` cookie and must send `X-CSRF-Token`
+      (the value of the `csrf_token` cookie) on every POST/PUT/PATCH/DELETE.
+    - Other clients send `Authorization: Bearer <session token>`; no CSRF header is needed.
+    - Calendar dates are `YYYY-MM-DD` and times `HH:mm` in the user's timezone; timestamps are UTC.
+    - Rates are fractions 0..1 (4 decimals) and `null` when nothing was due.
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Local development
+security:
+  - cookieAuth: []
+  - bearerAuth: []
+tags:
+  - name: Health
+  - name: Auth
+  - name: Account
+  - name: Workspaces
+  - name: Habits
+  - name: Completions
+  - name: Analytics
+  - name: Reminders
+  - name: Notifications
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness and database status
+      security: []
+      responses:
+        '200':
+          description: The process is alive; `db` reports PostgreSQL.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status, db, time]
+                properties:
+                  status: { type: string, enum: [ok] }
+                  db: { type: string, enum: [ok, down] }
+                  time: { type: string, format: date-time }
+
+  # ------------------------------------------------------------------ Auth
+  /auth/signup:
+    post:
+      tags: [Auth]
+      summary: Create an account (also its personal workspace and a session)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignupInput' }
+      responses:
+        '201':
+          description: Created; sets the hf_session and csrf_token cookies.
+          headers:
+            Set-Cookie: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in (new session, rotated CSRF token)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginInput' }
+      responses:
+        '200':
+          description: Logged in; sets the hf_session and csrf_token cookies.
+          headers:
+            Set-Cookie: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '401':
+          description: INVALID_CREDENTIALS (never says whether the email exists).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out this device (deletes the session, clears cookies)
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': { description: Logged out. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current user, workspaces, active workspace and plan
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /auth/csrf:
+    get:
+      tags: [Auth]
+      summary: Issue or refresh the csrf_token cookie
+      security: []
+      responses:
+        '200':
+          description: OK; sets the csrf_token cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [csrfToken]
+                properties:
+                  csrfToken: { type: string, minLength: 43, maxLength: 43 }
+
+  # ------------------------------------------------------------------ Account
+  /users/me:
+    patch:
+      tags: [Account]
+      summary: Update name, timezone or notification preferences
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateMeInput' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Account]
+      summary: Delete the account and the personal workspace's data
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 1, maxLength: 128 }
+      responses:
+        '204': { description: Deleted; cookies cleared. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /users/me/password:
+    patch:
+      tags: [Account]
+      summary: Change password (logs out every other session)
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [currentPassword, newPassword]
+              properties:
+                currentPassword: { type: string, minLength: 1, maxLength: 128 }
+                newPassword: { $ref: '#/components/schemas/NewPassword' }
+      responses:
+        '204': { description: Changed. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ------------------------------------------------------------------ Workspaces
+  /workspaces:
+    get:
+      tags: [Workspaces]
+      summary: Workspaces you belong to, with your role
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/WorkspaceMembership' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ------------------------------------------------------------------ Habits
+  /habits:
+    get:
+      tags: [Habits]
+      summary: List habits of the active workspace
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: status
+          in: query
+          schema: { type: string, enum: [active, archived, all], default: active }
+        - name: category
+          in: query
+          schema: { type: string, maxLength: 50 }
+        - name: search
+          in: query
+          description: Case-insensitive substring of the name.
+          schema: { type: string, maxLength: 100 }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK, ordered by sortOrder
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Habit' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    post:
+      tags: [Habits]
+      summary: Create a habit
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HabitCreateInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HabitResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /habits/categories:
+    get:
+      tags: [Habits]
+      summary: Distinct categories used in the workspace
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /habits/reorder:
+    patch:
+      tags: [Habits]
+      summary: Set sortOrder for several habits (all-or-nothing)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items:
+                    type: object
+                    required: [id, sortOrder]
+                    properties:
+                      id: { type: string, format: uuid }
+                      sortOrder: { type: integer, minimum: 0, maximum: 1000000 }
+      responses:
+        '204': { description: Reordered. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /habits/{id}:
+    parameters:
+      - $ref: '#/components/parameters/HabitId'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Habits]
+      summary: One habit with your current streak
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [habit, streaks]
+                properties:
+                  habit: { $ref: '#/components/schemas/Habit' }
+                  streaks: { $ref: '#/components/schemas/StreakDetail' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    patch:
+      tags: [Habits]
+      summary: Update a habit (validated on the merged result); status archives/restores
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/HabitUpdateInput' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HabitResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Habits]
+      summary: Archive (default) or permanently delete an archived habit
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+        - name: permanent
+          in: query
+          schema: { type: string, enum: ['true', 'false'], default: 'false' }
+      responses:
+        '204': { description: Archived or deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /habits/{id}/archive:
+    post:
+      tags: [Habits]
+      summary: Archive a habit (idempotent)
+      parameters:
+        - $ref: '#/components/parameters/HabitId'
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HabitResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /habits/{id}/unarchive:
+    post:
+      tags: [Habits]
+      summary: Restore an archived habit (counts against the plan limit)
+      parameters:
+        - $ref: '#/components/parameters/HabitId'
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HabitResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /habits/{id}/history:
+    get:
+      tags: [Analytics]
+      summary: Per-day status of one habit (default the last 30 days)
+      parameters:
+        - $ref: '#/components/parameters/HabitId'
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/FromOptional'
+        - $ref: '#/components/parameters/ToOptional'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [habitId, range, data]
+                properties:
+                  habitId: { type: string, format: uuid }
+                  range: { $ref: '#/components/schemas/Range' }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [date, status, completed]
+                      properties:
+                        date: { type: string, format: date }
+                        status: { $ref: '#/components/schemas/DayStatus' }
+                        completed: { type: boolean }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /habits/{id}/completions/{date}:
+    parameters:
+      - $ref: '#/components/parameters/HabitId'
+      - $ref: '#/components/parameters/CompletionDate'
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/CsrfToken'
+    put:
+      tags: [Completions]
+      summary: Mark the habit done on a date (idempotent)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string, maxLength: 280, nullable: true }
+      responses:
+        '200':
+          description: Already completed (note updated if sent).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompletionResponse' }
+        '201':
+          description: Created (may also create a streak_milestone notification).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompletionResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Completions]
+      summary: Undo a completion (204 whether or not it existed)
+      responses:
+        '204': { description: Removed (or there was nothing to remove). }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /habits/{id}/reminders:
+    parameters:
+      - $ref: '#/components/parameters/HabitId'
+      - $ref: '#/components/parameters/WorkspaceId'
+    get:
+      tags: [Reminders]
+      summary: Your reminders for a habit
+      responses:
+        '200':
+          description: OK, earliest time first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Reminder' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Reminders]
+      summary: Add a reminder (max 5 per habit)
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReminderCreateInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReminderResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ------------------------------------------------------------------ Completions / Today
+  /completions:
+    get:
+      tags: [Completions]
+      summary: Your completions in a date range (newest first)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/FromRequired'
+        - $ref: '#/components/parameters/ToRequired'
+        - name: habitId
+          in: query
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Completion' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /today:
+    get:
+      tags: [Completions]
+      summary: Daily overview for the dashboard
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: date
+          in: query
+          description: Defaults to today in your timezone.
+          schema: { type: string, format: date }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Today' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ------------------------------------------------------------------ Analytics
+  /analytics/summary:
+    get:
+      tags: [Analytics]
+      summary: Rates, series, streaks and categories for a range (default the last 30 days)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - $ref: '#/components/parameters/FromOptional'
+        - $ref: '#/components/parameters/ToOptional'
+        - name: habitId
+          in: query
+          schema: { type: string, format: uuid }
+        - name: includeArchived
+          in: query
+          schema: { type: string, enum: ['true', 'false'], default: 'true' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnalyticsSummary' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /analytics/heatmap:
+    get:
+      tags: [Analytics]
+      summary: Completed vs scheduled per day (default the current year)
+      parameters:
+        - $ref: '#/components/parameters/WorkspaceId'
+        - name: year
+          in: query
+          schema: { type: integer, minimum: 2000, maximum: 2100 }
+        - $ref: '#/components/parameters/FromOptional'
+        - $ref: '#/components/parameters/ToOptional'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [range, data]
+                properties:
+                  range: { $ref: '#/components/schemas/Range' }
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [date, completed, scheduled]
+                      properties:
+                        date: { type: string, format: date }
+                        completed: { type: integer }
+                        scheduled: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ------------------------------------------------------------------ Reminders
+  /reminders/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - $ref: '#/components/parameters/WorkspaceId'
+      - $ref: '#/components/parameters/CsrfToken'
+    patch:
+      tags: [Reminders]
+      summary: Change a reminder's time, weekdays or enabled
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ReminderUpdateInput' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReminderResponse' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [Reminders]
+      summary: Delete a reminder
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  # ------------------------------------------------------------------ Notifications
+  /notifications:
+    get:
+      tags: [Notifications]
+      summary: Your in-app notifications (newest first)
+      parameters:
+        - name: unreadOnly
+          in: query
+          schema: { type: string, enum: ['true', 'false'], default: 'false' }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, meta]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  meta:
+                    allOf:
+                      - $ref: '#/components/schemas/PageMeta'
+                      - type: object
+                        required: [unreadCount]
+                        properties:
+                          unreadCount: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: Number of unread notifications
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [unreadCount]
+                properties:
+                  unreadCount: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+  /notifications/{id}/read:
+    patch:
+      tags: [Notifications]
+      summary: Mark one notification read (idempotent)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [notification]
+                properties:
+                  notification: { $ref: '#/components/schemas/Notification' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+  /notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: Mark all your unread notifications read
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updated]
+                properties:
+                  updated: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: hf_session
+      description: Session cookie set by signup/login. Writes also need the X-CSRF-Token header.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: The same session token, for non-browser clients (no CSRF header needed).
+
+  parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Required for cookie-authenticated writes; the value of the csrf_token cookie.
+      schema: { type: string }
+    WorkspaceId:
+      name: X-Workspace-Id
+      in: header
+      required: false
+      description: Active workspace (default your personal one). Not a member -> 404.
+      schema: { type: string, format: uuid }
+    HabitId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CompletionDate:
+      name: date
+      in: path
+      required: true
+      schema: { type: string, format: date }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    FromRequired:
+      name: from
+      in: query
+      required: true
+      schema: { type: string, format: date }
+    ToRequired:
+      name: to
+      in: query
+      required: true
+      description: from <= to, at most 366 days in total.
+      schema: { type: string, format: date }
+    FromOptional:
+      name: from
+      in: query
+      description: Send together with `to`.
+      schema: { type: string, format: date }
+    ToOptional:
+      name: to
+      in: query
+      description: Send together with `from`; at most 366 days in total.
+      schema: { type: string, format: date }
+
+  responses:
+    Unauthenticated:
+      description: UNAUTHENTICATED (no, expired or revoked session).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: CSRF_TOKEN_INVALID, PLAN_LIMIT_REACHED or INSUFFICIENT_ROLE.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: NOT_FOUND (does not exist, or is not yours / not in your workspace).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: >-
+        EMAIL_TAKEN, HABIT_ARCHIVED, HABIT_NOT_ARCHIVED, REMINDER_DUPLICATE, RESOURCE_IN_USE or
+        UNIQUE_VIOLATION.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationError:
+      description: >-
+        VALIDATION_ERROR (details list every field problem) or a business rule:
+        INVALID_CURRENT_PASSWORD, DATE_NOT_COMPLETABLE, DATE_NOT_SCHEDULED,
+        REMINDER_LIMIT_REACHED, REMINDER_WEEKDAYS_NOT_SCHEDULED, INVALID_REFERENCE.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: RATE_LIMITED.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: VALIDATION_ERROR }
+            message: { type: string }
+            details:
+              description: Optional; for VALIDATION_ERROR a list of { location, path, message }.
+              oneOf:
+                - type: array
+                  items:
+                    type: object
+                    properties:
+                      location: { type: string, enum: [body, query, params, headers] }
+                      path: { type: string }
+                      message: { type: string }
+                - type: object
+    PageMeta:
+      type: object
+      required: [page, limit, total]
+      properties:
+        page: { type: integer }
+        limit: { type: integer }
+        total: { type: integer }
+    Range:
+      type: object
+      required: [from, to]
+      properties:
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+    Weekdays:
+      type: array
+      description: ISO weekdays, 1 = Monday ... 7 = Sunday; unique.
+      minItems: 1
+      uniqueItems: true
+      items: { type: integer, minimum: 1, maximum: 7 }
+    NewPassword:
+      type: string
+      minLength: 8
+      maxLength: 128
+      description: At least one letter and one number.
+    DayStatus:
+      type: string
+      enum: [completed, pending, missed, not_scheduled, upcoming]
+
+    SignupInput:
+      type: object
+      required: [name, email, password]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        email: { type: string, format: email, maxLength: 254 }
+        password: { $ref: '#/components/schemas/NewPassword' }
+        timezone: { type: string, default: UTC, example: America/New_York }
+    LoginInput:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1, maxLength: 128 }
+    NotificationPreferences:
+      type: object
+      properties:
+        inApp: { type: boolean }
+        reminders: { type: boolean }
+    User:
+      type: object
+      required: [id, name, email, timezone, notificationPreferences, lastLoginAt, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        email: { type: string, format: email }
+        timezone: { type: string }
+        notificationPreferences: { $ref: '#/components/schemas/NotificationPreferences' }
+        lastLoginAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    UserResponse:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+    UpdateMeInput:
+      type: object
+      minProperties: 1
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        timezone: { type: string }
+        notificationPreferences: { $ref: '#/components/schemas/NotificationPreferences' }
+    WorkspaceMembership:
+      type: object
+      required: [id, name, type, role]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        type: { type: string, enum: [personal, team] }
+        role: { type: string, enum: [owner, admin, member] }
+    Me:
+      type: object
+      required: [user, workspaces, activeWorkspaceId, plan]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        workspaces:
+          type: array
+          items: { $ref: '#/components/schemas/WorkspaceMembership' }
+        activeWorkspaceId: { type: string, format: uuid }
+        plan:
+          type: object
+          required: [code, limits]
+          properties:
+            code: { type: string, example: free }
+            limits:
+              type: object
+              properties:
+                maxActiveHabits: { type: integer, nullable: true }
+                historyDays: { type: integer, nullable: true }
+
+    Habit:
+      type: object
+      required: [id, workspaceId, createdBy, name, frequencyType, startDate, status, sortOrder]
+      properties:
+        id: { type: string, format: uuid }
+        workspaceId: { type: string, format: uuid }
+        createdBy: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        category: { type: string, nullable: true }
+        color: { type: string, nullable: true, pattern: '^#[0-9A-Fa-f]{6}$' }
+        icon: { type: string, nullable: true }
+        frequencyType: { type: string, enum: [daily, weekdays, weekly_target] }
+        weekdays:
+          allOf: [{ $ref: '#/components/schemas/Weekdays' }]
+          nullable: true
+        targetPerWeek: { type: integer, minimum: 1, maximum: 7, nullable: true }
+        startDate: { type: string, format: date }
+        status: { type: string, enum: [active, archived] }
+        archivedAt: { type: string, format: date-time, nullable: true }
+        sortOrder: { type: integer }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    HabitResponse:
+      type: object
+      required: [habit]
+      properties:
+        habit: { $ref: '#/components/schemas/Habit' }
+    HabitCreateInput:
+      type: object
+      required: [name, frequencyType]
+      description: >-
+        weekdays is required for `weekdays` habits and forbidden otherwise; targetPerWeek is
+        required for `weekly_target` and forbidden otherwise. startDate defaults to today and may
+        be at most 1 year ahead.
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, maxLength: 500, nullable: true }
+        category: { type: string, maxLength: 50, nullable: true }
+        color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$', nullable: true }
+        icon: { type: string, maxLength: 50, nullable: true }
+        frequencyType: { type: string, enum: [daily, weekdays, weekly_target] }
+        weekdays:
+          allOf: [{ $ref: '#/components/schemas/Weekdays' }]
+          nullable: true
+        targetPerWeek: { type: integer, minimum: 1, maximum: 7, nullable: true }
+        startDate: { type: string, format: date }
+    HabitUpdateInput:
+      type: object
+      minProperties: 1
+      description: >-
+        Any subset of the create fields plus `status`. Validated on the merged result. An archived
+        habit may only change name/description unless `status: active` is sent (409 HABIT_ARCHIVED).
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, maxLength: 500, nullable: true }
+        category: { type: string, maxLength: 50, nullable: true }
+        color: { type: string, pattern: '^#[0-9A-Fa-f]{6}$', nullable: true }
+        icon: { type: string, maxLength: 50, nullable: true }
+        frequencyType: { type: string, enum: [daily, weekdays, weekly_target] }
+        weekdays:
+          allOf: [{ $ref: '#/components/schemas/Weekdays' }]
+          nullable: true
+        targetPerWeek: { type: integer, minimum: 1, maximum: 7, nullable: true }
+        startDate: { type: string, format: date }
+        status: { type: string, enum: [active, archived] }
+    WeekProgress:
+      type: object
+      nullable: true
+      required: [done, target]
+      properties:
+        done: { type: integer }
+        target: { type: integer }
+    StreakDetail:
+      type: object
+      required: [current, longest, unit, status]
+      properties:
+        current: { type: integer }
+        longest: { type: integer }
+        unit: { type: string, enum: [days, weeks] }
+        status: { $ref: '#/components/schemas/DayStatus' }
+        weekProgress: { $ref: '#/components/schemas/WeekProgress' }
+
+    Completion:
+      type: object
+      required: [id, habitId, completedBy, completionDate, completedAt, note]
+      properties:
+        id: { type: string, format: uuid }
+        habitId: { type: string, format: uuid }
+        completedBy: { type: string, format: uuid }
+        completionDate: { type: string, format: date }
+        completedAt: { type: string, format: date-time }
+        note: { type: string, nullable: true }
+    CompletionResponse:
+      type: object
+      required: [completion]
+      properties:
+        completion: { $ref: '#/components/schemas/Completion' }
+    Today:
+      type: object
+      required: [date, today, habits, summary]
+      properties:
+        date: { type: string, format: date }
+        today: { type: string, format: date }
+        habits:
+          type: array
+          items:
+            type: object
+            required: [habit, completed, completion, status, isDue, streak]
+            properties:
+              habit: { $ref: '#/components/schemas/Habit' }
+              completed: { type: boolean }
+              completion:
+                allOf: [{ $ref: '#/components/schemas/Completion' }]
+                nullable: true
+              status: { $ref: '#/components/schemas/DayStatus' }
+              isDue:
+                type: boolean
+                description: Today, still pending, and one of your reminders' times has passed.
+              streak:
+                type: object
+                required: [current, longest, unit]
+                properties:
+                  current: { type: integer }
+                  longest: { type: integer }
+                  unit: { type: string, enum: [days, weeks] }
+              weekProgress: { $ref: '#/components/schemas/WeekProgress' }
+        summary: { $ref: '#/components/schemas/DaySummary' }
+    DaySummary:
+      type: object
+      required: [scheduled, completed, remaining, percent]
+      properties:
+        scheduled: { type: integer }
+        completed: { type: integer }
+        remaining: { type: integer }
+        percent: { type: integer, nullable: true, minimum: 0, maximum: 100 }
+
+    Rate:
+      type: number
+      nullable: true
+      minimum: 0
+      maximum: 1
+      description: Fraction with up to 4 decimals; null when nothing was due.
+    AnalyticsSummary:
+      type: object
+      required: [range, today, overall, bestStreak, daily, weekly, byHabit, byCategory]
+      properties:
+        range: { $ref: '#/components/schemas/Range' }
+        today: { $ref: '#/components/schemas/DaySummary' }
+        overall:
+          type: object
+          required: [completionRate, completed, scheduled]
+          properties:
+            completionRate: { $ref: '#/components/schemas/Rate' }
+            completed: { type: integer }
+            scheduled: { type: integer }
+        bestStreak:
+          type: object
+          nullable: true
+          required: [habitId, name, longest, unit]
+          properties:
+            habitId: { type: string, format: uuid }
+            name: { type: string }
+            longest: { type: integer }
+            unit: { type: string, enum: [days, weeks] }
+        daily:
+          type: array
+          items:
+            type: object
+            required: [date, scheduled, completed, rate]
+            properties:
+              date: { type: string, format: date }
+              scheduled: { type: integer }
+              completed: { type: integer }
+              rate: { $ref: '#/components/schemas/Rate' }
+        weekly:
+          type: array
+          items:
+            type: object
+            required: [weekStart, scheduled, completed, rate]
+            properties:
+              weekStart: { type: string, format: date }
+              scheduled: { type: integer }
+              completed: { type: integer }
+              rate: { $ref: '#/components/schemas/Rate' }
+        byHabit:
+          type: array
+          items:
+            type: object
+            required: [habitId, name, category, status, completionRate, completed, scheduled, currentStreak, longestStreak, unit]
+            properties:
+              habitId: { type: string, format: uuid }
+              name: { type: string }
+              category: { type: string, nullable: true }
+              status: { type: string, enum: [active, archived] }
+              completionRate: { $ref: '#/components/schemas/Rate' }
+              completed: { type: integer }
+              scheduled: { type: integer }
+              currentStreak: { type: integer }
+              longestStreak: { type: integer }
+              unit: { type: string, enum: [days, weeks] }
+        byCategory:
+          type: array
+          items:
+            type: object
+            required: [category, completionRate, completed, scheduled]
+            properties:
+              category: { type: string, nullable: true }
+              completionRate: { $ref: '#/components/schemas/Rate' }
+              completed: { type: integer }
+              scheduled: { type: integer }
+
+    Reminder:
+      type: object
+      required: [id, habitId, remindAt, weekdays, enabled, createdAt, updatedAt]
+      properties:
+        id: { type: string, format: uuid }
+        habitId: { type: string, format: uuid }
+        remindAt: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$', example: '07:30' }
+        weekdays:
+          allOf: [{ $ref: '#/components/schemas/Weekdays' }]
+          nullable: true
+          description: null = every scheduled day of the habit.
+        enabled: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    ReminderResponse:
+      type: object
+      required: [reminder]
+      properties:
+        reminder: { $ref: '#/components/schemas/Reminder' }
+    ReminderCreateInput:
+      type: object
+      required: [remindAt]
+      properties:
+        remindAt: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
+        weekdays:
+          allOf: [{ $ref: '#/components/schemas/Weekdays' }]
+          nullable: true
+        enabled: { type: boolean, default: true }
+    ReminderUpdateInput:
+      type: object
+      minProperties: 1
+      properties:
+        remindAt: { type: string, pattern: '^([01]\d|2[0-3]):[0-5]\d$' }
+        weekdays:
+          allOf: [{ $ref: '#/components/schemas/Weekdays' }]
+          nullable: true
+        enabled: { type: boolean }
+
+    Notification:
+      type: object
+      required: [id, type, title, message, data, readAt, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        type: { type: string, enum: [habit_reminder, streak_milestone, system] }
+        title: { type: string }
+        message: { type: string }
+        data:
+          type: object
+          description: >-
+            habit_reminder: { habitId, reminderId, date }; streak_milestone: { habitId, streak, unit }.
+        readAt: { type: string, format: date-time, nullable: true }
+        createdAt: { type: string, format: date-time }

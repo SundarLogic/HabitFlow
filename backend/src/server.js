@@ -6,13 +6,16 @@
  *   2. Check the database connection once at startup (warn if it is down).
  *   3. Shut down "gracefully" when asked to stop (Ctrl+C, Docker stop, deployment restart):
  *      stop accepting new requests, let in-flight requests finish, close DB connections, exit.
- *   4. Crash loudly (and log why) on programming errors nobody handled, instead of running on
+ *   4. Start the background jobs (reminder scheduler, daily housekeeping) and stop them on shutdown.
+ *      They are started HERE, not in app.js, so tests that build apps never start timers.
+ *   5. Crash loudly (and log why) on programming errors nobody handled, instead of running on
  *      in an unknown, possibly broken state.
  */
 import http from 'node:http';
 import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
+import { startJobs } from './jobs/index.js';
 import { sequelize } from './models/index.js';
 
 // If graceful shutdown takes longer than this, we give up and force the process to exit.
@@ -58,6 +61,9 @@ try {
   logger.warn({ err: { message: err.message } }, 'Database is not reachable at startup');
 }
 
+// --- Background jobs ------------------------------------------------------------------------
+const stopJobs = startJobs({ logger });
+
 // --- Graceful shutdown ----------------------------------------------------------------------
 // Guard so that pressing Ctrl+C twice does not run the shutdown steps twice.
 let shuttingDown = false;
@@ -80,6 +86,8 @@ async function shutdown(signal) {
   forceExit.unref();
 
   try {
+    // Stop the cron jobs first so no new tick starts while we close connections.
+    await stopJobs();
     // server.close() stops accepting new connections and calls back once existing ones finish.
     // It uses a callback, so we wrap it in a Promise to be able to `await` it.
     await new Promise((resolve, reject) => {

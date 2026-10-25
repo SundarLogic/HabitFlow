@@ -66,7 +66,7 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 
 **Auth / sessions**
 - Token: 32 bytes from `crypto.randomBytes`, base64url. Cookie name `hf_session` (HttpOnly, SameSite=Lax, Path=/, Secure when `COOKIE_SECURE`). Only `sha256(token)` is stored in `sessions.token_hash` (unique), along with `user_id`, `expires_at`, `last_used_at`, `created_at`, `user_agent`, `ip`.
-- Session lifetime = `SESSION_TTL_DAYS` (default 30), **sliding**: when a session is used and `last_used_at` is ≥ 5 minutes old, both `last_used_at` and `expires_at` move forward and the cookie is re-sent (ADR-031). Expired sessions are rejected and deleted on use, and purged by `runSessionCleanup` (node-cron schedule in Phase 7).
+- Session lifetime = `SESSION_TTL_DAYS` (default 30), **sliding**: when a session is used and `last_used_at` is ≥ 5 minutes old, both `last_used_at` and `expires_at` move forward and the cookie is re-sent (ADR-031). Expired sessions are rejected and deleted on use, and purged daily by `runHousekeeping` (jobs/housekeeping.js).
 - `Authorization: Bearer <token>` is accepted as an alternative to the cookie. The cookie wins if both are sent. **CSRF checks apply only to cookie-authenticated requests**, not Bearer.
 - Passwords: 8–128 characters with at least one letter and one number (Unicode-aware). Stored as `bcrypt(base64(sha256(password)))` with cost 12 (ADR-030); always use `utils/password.js`. Login failures return a generic 401 `INVALID_CREDENTIALS` and do not reveal whether the email exists: bcrypt runs against a dummy hash for unknown emails. A wrong current password on password change or account deletion → 422 `INVALID_CURRENT_PASSWORD`.
 - Emails are trimmed and lowercased (validator, model setter and DB CHECK).
@@ -112,8 +112,15 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 - `DELETE /habits/:id` **archives** by default: `status = 'archived'`, `archived_at = now()`. History stays queryable, and analytics can include archived habits through a filter.
 - `DELETE /habits/:id?permanent=true` hard-deletes and is only allowed when the habit is already archived, otherwise 409 `HABIT_NOT_ARCHIVED`. It removes the habit, its schedule days and its completions in one transaction (FKs are `ON DELETE CASCADE`), leaving no orphans.
 - Restoring (`PATCH status: 'active'`) counts against the plan's active-habit limit.
-- Notifications older than 90 days are purged by a cron job.
+- Notifications older than 90 days (read or not) are purged daily by `runHousekeeping` (ADR-043).
 - Account deletion (`DELETE /users/me`, password re-typed) deletes the personal workspace (cascading its data) and then the user, in one transaction. If the user still owns a team workspace or has history in another workspace, RESTRICT FKs roll it back → 409 `RESOURCE_IN_USE` (ADR-032).
+
+**Reminders and notifications** (ADR-042 to ADR-044)
+- Reminders belong to one user and one habit, and are reached only through a habit of the active workspace (else 404). `remindAt` is `HH:mm` in the user's timezone; `weekdays` is null (every scheduled day) or unique ISO days, which must be a subset of a `weekdays` habit's schedule (422 `REMINDER_WEEKDAYS_NOT_SCHEDULED`). Max 5 per habit (422 `REMINDER_LIMIT_REACHED`), one per time (409 `REMINDER_DUPLICATE`), none added to archived habits (409 `HABIT_ARCHIVED`).
+- The scheduler sends a `habit_reminder` when a reminder's time equals the user's local `HH:mm`. It skips reminders whose weekdays exclude today, habits that are archived, unscheduled today, completed today, or (weekly) at target, and users with `reminders: false`. Dedupe key: `reminder:{reminderId}:{localDate}`.
+- All sending goes through `dispatchNotification()` (`services/notifications/`); never insert notification rows directly. New channels (push, email) subclass `NotificationChannel`.
+- Streak milestones 7/30/100/365: sent when a NEW completion makes the current streak cross one (highest only, once per run). Missing a day never creates a notification.
+- `GET /today` items carry `isDue`: viewing today, still pending, and an applicable reminder time has passed.
 
 **Workspaces / authorization**
 - Each user gets a `personal` workspace (role `owner`) at signup, in the same transaction that creates the user.
@@ -146,12 +153,12 @@ routes -> validators (Zod) -> controllers (HTTP only) -> services (business logi
 - **routes/**: path + middleware wiring only. `routes/index.js` mounts every router under `/api/v1`.
 - **validators/**: Zod schemas for `body`, `params` and `query`, applied by `validate({ body, params, query })` (`middleware/validate.js`). The parsed output (coerced, defaults applied, unknown keys stripped) **replaces** `req.body` / `req.params` / `req.query`. Validation failure → 422 `VALIDATION_ERROR` with `details: [{ location, path, message }]`.
 - **controllers/**: read the validated input, call one service, and shape the HTTP response. **Controllers never query the DB directly** and never import models.
-- **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`. Workspace-scoped services take the workspace id first and always query by `(id, workspaceId)` together. Current services: `auth`, `user`, `workspace`, `entitlement`, `habit`, `completion`, `today`, `analytics` (summary, heatmap, habit history: two queries each), `streak` (loads completions for many habits in **one** query; never query per habit in a loop), `health`.
+- **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`. Workspace-scoped services take the workspace id first and always query by `(id, workspaceId)` together. Current services: `auth`, `user`, `workspace`, `entitlement`, `habit`, `completion`, `today`, `analytics` (summary, heatmap, habit history: two queries each), `reminder` (CRUD), `reminderDispatch` (the scheduler's work: 4 queries per tick), `milestone`, `notification` (inbox + purge), `notifications/` (delivery channels + `dispatchNotification`), `streak` (loads completions for many habits in **one** query; never query per habit in a loop), `health`.
 - **domain/**: pure business rules with no DB, HTTP or clock access, unit-tested directly. `dates.js` (`todayIn(tz, now)`, `isValidIsoDate`, `isoWeekday`, `addToDate`, `addDays`, `daysBetween`, `weekBounds`, `eachDay`), `schedule.js` (`isScheduledOn`) and `streaks.js` (`computeStreak`, `dayStatus`, `weekProgress`, `weekTarget`) and `analytics.js` (`scheduledInstances`, `completionRate`, `summarize`, `habitHistory`). Rules: [docs/STREAK_RULES.md](docs/STREAK_RULES.md). Calendar dates are `'YYYY-MM-DD'` strings, compared as strings.
 - **models/**: Sequelize models and associations only. `models/index.js` creates the shared `sequelize` instance and exports every model (`import { sequelize, User, Habit } from '../models/index.js'`). One class per file with `static initModel(sequelize)` and `static associate(models)`; index.js inits all, then associates all. `constants.js` holds the allowed enum values. Model validators mirror the DB CHECKs. `User`'s default scope excludes `passwordHash`; only login code uses `User.scope('withPassword')`, and `toJSON()` always strips it. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside test setup helpers. Schema reference: [docs/ERD.md](docs/ERD.md).
 - **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter`, `createAuthRateLimiter` → 429 via the error handler), `auth` (`requireAuth`), `csrf` (`csrfProtection`), `workspace` (`resolveWorkspace`, `requireRole`). See "Auth flow" below for the order.
-- **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash), `toPublicWorkspace(workspace, role)`, `toPublicHabit(habit)` (needs `scheduleDays` loaded) and `toPublicCompletion(completion)`. Controllers never `res.json()` a model instance.
-- **jobs/**: node-cron jobs (session purge, notification generation and purge).
+- **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash), `toPublicWorkspace(workspace, role)`, `toPublicHabit(habit)` (needs `scheduleDays` loaded), `toPublicCompletion(completion)`, `toPublicReminder(reminder)` (`remindAt` as `HH:mm`) and `toPublicNotification(notification)` (never exposes `dedupeKey`). Controllers never `res.json()` a model instance.
+- **jobs/**: node-cron jobs, started **only** by `server.js` via `jobs/index.js` `startJobs()` (never by `app.js`, so tests never start timers; nothing runs under `NODE_ENV=test`). `reminderScheduler.js` (every minute, `runReminderTick({ now })`, off when `REMINDERS_ENABLED=false`) and `housekeeping.js` (daily 03:15 UTC, `runHousekeeping({ now })`: expired sessions and notifications older than 90 days). Each exports its tick function so tests call it with a fake clock. `server.js` stops the jobs first on shutdown.
 - **config/**:
   - `env.js`: loads `backend/.env`, validates every variable with Zod and exits with a readable message if anything is invalid. Import `env` from here; never read `process.env` elsewhere in app code.
   - `database.cjs`: the single DB config shared by sequelize-cli and the app (development / test / production).
@@ -214,7 +221,7 @@ CSRF runs before validation so a forged request learns nothing from validation m
 | Logout `POST /auth/logout` | Deletes this session row (immediate revocation), clears both cookies, 204. |
 | Password change | Verify the current password → new hash + delete all other sessions in one transaction → 204. |
 | Account deletion | Verify the password → transaction: delete personal workspace (cascade), then user → clear cookies → 204. |
-| Cleanup | `jobs/sessionCleanup.js` `runSessionCleanup()` deletes sessions with `expires_at ≤ now` (scheduled nightly in Phase 7). |
+| Cleanup | `jobs/housekeeping.js` `runHousekeeping()` deletes sessions with `expires_at ≤ now` (daily at 03:15 UTC). |
 
 **SPA bootstrap:** `GET /auth/csrf` (gets a CSRF cookie) → `GET /auth/me` (401 = show login) → send `X-CSRF-Token` with the `csrf_token` cookie value on every non-GET request, plus `credentials: 'include'`.
 
@@ -241,7 +248,15 @@ CSRF runs before validation so a forged request learns nothing from validation m
   - `GET /analytics/heatmap?year` or `?from&to` → `{ range, data: [{ date, completed, scheduled }] }`. Default: the current year.
   - `GET /habits/:id/history?from&to` → `{ habitId, range, data: [{ date, status, completed }] }`. Default: the last 30 days.
   - Optional ranges: `from` and `to` together or neither; when given, the §5 range rules apply.
-- Full reference with real example responses: [docs/API.md](docs/API.md).
+- Phase 7:
+  - `GET` / `POST /habits/:id/reminders` → `{ data }` / 201 `{ reminder }`
+  - `PATCH /reminders/:id` → `{ reminder }`; `DELETE /reminders/:id` → 204 (workspace-scoped)
+  - `GET /notifications?unreadOnly&page&limit` → `{ data, meta: { page, limit, total, unreadCount } }`
+  - `GET /notifications/unread-count` → `{ unreadCount }`
+  - `PATCH /notifications/:id/read` → `{ notification }`
+  - `POST /notifications/read-all` → `{ updated }` (user-scoped, no workspace)
+  - `GET /today` items gained `isDue`.
+- **The backend is feature-complete for the first release.** Full reference with request/response examples and every error code: [docs/API.md](docs/API.md). OpenAPI 3 spec: [docs/openapi.yaml](docs/openapi.yaml). Keep both in sync with the routes when adding an endpoint.
 
 ---
 
@@ -307,7 +322,7 @@ CSRF runs before validation so a forged request learns nothing from validation m
 | **Backend** (run inside `backend/`) | |
 | Install deps | `npm install` |
 | Configure env | copy `.env.example` → `.env` (DB_PORT must match the root `POSTGRES_PORT`) |
-| Dev server (auto-restart) | `npm run dev` → http://localhost:3000/api/v1/health |
+| Dev server (auto-restart) | `npm run dev` → http://localhost:3000/api/v1/health (also starts the reminder scheduler and housekeeping; set `REMINDERS_ENABLED=false` in `.env` to silence reminders) |
 | Production start | `npm start` |
 | Tests (migrates test DB first) | `npm test` · watch: `npm run test:watch` · one file: `npm test -- tests/unit/env.test.js` |
 | Lint | `npm run lint` |
@@ -342,3 +357,4 @@ CSRF runs before validation so a forged request learns nothing from validation m
 | 4 | Habit management: `domain/` (pure `dates.js`, `schedule.js` `isScheduledOn`), `habitValidators.js` (field rules + shared cross-field `habitStateIssues`), `entitlementService` (plan limit with a workspace row lock), `habitService` (list/filter/search/paginate, get, create, merged-state update, archive/unarchive, archive-or-permanent delete, reorder, categories), `toPublicHabit` serializer, 9 `/habits` endpoints. ADR-035 to ADR-037. 295 tests passing (the concurrency test was confirmed to fail without the lock). Follow-up: streaks on `GET /habits/:id` are `null` placeholders until Phase 5. |
 | 5 | Completions and streaks: pure `domain/streaks.js` (day/week streaks, pending vs missed, prorated first week, day status, week progress) with 51 hand-written cases plus a randomized cross-check against a naive reference implementation (600 histories; confirmed to catch planted bugs). `completionService` (race-safe idempotent mark, idempotent unmark, history), `todayService` (dashboard in two queries, verified by a query-counting test), real streaks on `GET /habits/:id`. Endpoints: PUT/DELETE completions, GET /completions, GET /today. docs/STREAK_RULES.md. ADR-038 to ADR-040. |
 | 6 | Analytics: pure `domain/analytics.js` (`scheduledInstances`, `completionRate`, `summarize`, `habitHistory`), `analyticsService` (two queries per endpoint, verified by a query-counting test). Endpoints: `GET /analytics/summary`, `GET /analytics/heatmap`, `GET /habits/:id/history`. Integration tests check a hand-calculated fixture whose maths is documented in the test header. docs/API.md with real example responses; STREAK_RULES.md §8 (rates). ADR-041. |
+| 7 | Reminders and notifications: reminder CRUD (`/habits/:id/reminders`, `/reminders/:id`), delivery abstraction (`NotificationChannel`, `InAppChannel`, `dispatchNotification` with preferences and DB dedupe), reminder scheduler (Luxon per-timezone matching, 4 queries per tick, exactly-once) and daily housekeeping, both started only from `server.js` (`REMINDERS_ENABLED` env var), streak milestone notifications, notification inbox endpoints, `isDue` on `/today`. Removed `jobs/sessionCleanup.js` (now part of housekeeping). docs/API.md (every endpoint) and docs/openapi.yaml (34 operations, checked against the route files). ADR-042 to ADR-044. 492 tests passing. **Backend feature-complete for the first release.** |

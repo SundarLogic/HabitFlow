@@ -13,6 +13,7 @@ import { isScheduledOn } from '../domain/schedule.js';
 import { Habit, HabitCompletion, HabitScheduleDay, sequelize } from '../models/index.js';
 import { ConflictError, NotFoundError, ValidationError } from '../utils/AppError.js';
 import { now as systemNow } from '../utils/clock.js';
+import { notifyStreakMilestone } from './milestoneService.js';
 
 /**
  * The habit (in this workspace) with its weekdays, read-locked for the rest of the transaction.
@@ -46,6 +47,8 @@ function assertActive(habit) {
  *   - We then SELECT the row, which exists either way.
  * `created` tells the controller to answer 201 (new) or 200 (already done).
  * If a `note` is sent for an existing completion, the note is updated (PUT sets the state).
+ * A new completion that makes the current streak reach 7/30/100/365 also creates a
+ * 'streak_milestone' notification (milestoneService).
  *
  * Rules, checked in this order:
  *   404 NOT_FOUND            habit not in this workspace
@@ -106,6 +109,17 @@ export function markCompletion({ workspace, user, habitId, date, note, now = sys
     });
     if (!created && note !== undefined && completion.note !== note) {
       completion = await completion.update({ note }, { transaction });
+    }
+    // Only a NEW completion can lengthen a streak, so only then look for a milestone.
+    if (created) {
+      await notifyStreakMilestone({
+        habit,
+        scheduleDays: weekdays,
+        user,
+        date,
+        today,
+        transaction,
+      });
     }
     return { completion, created };
   });

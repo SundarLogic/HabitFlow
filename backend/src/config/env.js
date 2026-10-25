@@ -97,6 +97,8 @@ const envSchema = z
     CLIENT_ORIGINS: clientOrigins,
     SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
     COOKIE_SECURE: booleanString.optional(),
+    // The every-minute reminder scheduler (server.js only; never runs under NODE_ENV=test).
+    REMINDERS_ENABLED: booleanString.optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   })
   // superRefine = rules that involve SEVERAL variables at once. ctx.addIssue() reports a problem.
@@ -140,9 +142,11 @@ const envSchema = z
     }
   })
   // Final touch: if COOKIE_SECURE wasn't set, default it to true in production, false otherwise.
+  // REMINDERS_ENABLED defaults to true.
   .transform((env) => ({
     ...env,
     COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
+    REMINDERS_ENABLED: env.REMINDERS_ENABLED ?? true,
   }));
 
 /**

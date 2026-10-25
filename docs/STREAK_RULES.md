@@ -113,7 +113,26 @@ Every later week uses the full target. Completions before `startDate` don't coun
 
 Marking an already-completed date returns **200** with the existing record (a new completion returns 201); two clicks or a retried request can never create duplicates. Undoing a completion returns 204 whether or not it existed.
 
-## 8. Edge cases covered by tests
+## 8. Completion rates (analytics)
+
+Code: `backend/src/domain/analytics.js`, tests: `backend/tests/unit/analytics.test.js` and the hand-calculated fixture in `backend/tests/integration/analytics.test.js`.
+
+- **Scheduled instance:** one scheduled **day** (daily / weekdays) or one ISO **week** (weekly_target, complete when the week's completions reach its target, prorated in the first week).
+- **Completion rate = completed instances ÷ scheduled instances**, or `null` when nothing was due (the UI shows an empty state, never 0%).
+- **Nothing in progress lowers a rate:** today is an instance only once it is completed; the current week only once its target is met.
+- **Archived habits** are evaluated up to their archive date (in the user's timezone): the days after archiving are not instances, and the archive day counts only if done.
+- **Weeks and ranges:** a week that overlaps the range is included and evaluated on all of its own completions, even those before `from`.
+- **Daily series and heatmap** contain day-based habits only (a weekly target has no per-day instance).
+
+| Example (today Wed Oct 28) | Instances | Rate |
+|---|---|---|
+| Daily, done 26 and 28, range 26–28 | 26 ✓, 27 ✗, 28 ✓ | 2/3 = 0.6667 |
+| Daily, done 26 only, range 26–28 | 26 ✓, 27 ✗ (28 pending, not counted) | 1/2 = 0.5 |
+| Weekly target 2, 1 done this week | none yet (week running, not met) | `null` |
+| Weekly target 2, 2 done this week | this week ✓ | 1/1 = 1 |
+| Habit archived Oct 21, range 19–28, done 19 and 21 | 19 ✓, 20 ✗, 21 ✓ | 2/3 = 0.6667 |
+
+## 9. Edge cases covered by tests
 
 - **DST:** New York's 23-hour day (Mar 8 2026) and 25-hour day (Nov 1 2026). Streaks run straight through both, and "today" switches exactly at local midnight. Dates are handled as calendar dates, never as hours, so DST can't shift them.
 - **Different timezones at the same instant:** an Auckland user can already have missed yesterday while a Los Angeles user, at the same instant, still has today pending.

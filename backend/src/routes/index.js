@@ -8,6 +8,7 @@
  * This is a factory because some routers (auth) hold per-app state such as rate-limit counters.
  */
 import { Router } from 'express';
+import { analyticsRouter } from './analyticsRoutes.js';
 import { createAuthRouter } from './authRoutes.js';
 import { completionRouter, todayRouter } from './completionRoutes.js';
 import { habitRouter } from './habitRoutes.js';
@@ -28,5 +29,6 @@ export function createApiRouter({ authRateLimit }) {
   router.use('/habits', habitRouter);
   router.use('/completions', completionRouter);
   router.use('/today', todayRouter);
+  router.use('/analytics', analyticsRouter);
   return router;
 }

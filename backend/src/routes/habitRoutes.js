@@ -9,12 +9,14 @@
  * /reorder must come before /:id, or "reorder" would be treated as a habit id.
  */
 import { Router } from 'express';
+import * as analyticsController from '../controllers/analyticsController.js';
 import * as completionController from '../controllers/completionController.js';
 import * as habitController from '../controllers/habitController.js';
 import { requireAuth } from '../middleware/auth.js';
 import { csrfProtection } from '../middleware/csrf.js';
 import { validate } from '../middleware/validate.js';
 import { resolveWorkspace } from '../middleware/workspace.js';
+import { habitHistoryQuery } from '../validators/analyticsValidators.js';
 import { completionParams, markCompletionBody } from '../validators/completionValidators.js';
 import {
   createHabitBody,
@@ -44,6 +46,12 @@ habitRouter.delete(
   '/:id',
   validate({ params: habitIdParams, query: deleteHabitQuery }),
   habitController.remove,
+);
+// Per-day statuses for the habit detail calendar (default: the last 30 days).
+habitRouter.get(
+  '/:id/history',
+  validate({ params: habitIdParams, query: habitHistoryQuery }),
+  analyticsController.habitHistory,
 );
 habitRouter.post('/:id/archive', validate({ params: habitIdParams }), habitController.archive);
 habitRouter.post('/:id/unarchive', validate({ params: habitIdParams }), habitController.unarchive);

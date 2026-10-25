@@ -9,6 +9,7 @@
  */
 import { Router } from 'express';
 import { createAuthRouter } from './authRoutes.js';
+import { habitRouter } from './habitRoutes.js';
 import { healthRouter } from './healthRoutes.js';
 import { userRouter } from './userRoutes.js';
 import { workspaceRouter } from './workspaceRoutes.js';
@@ -23,5 +24,6 @@ export function createApiRouter({ authRateLimit }) {
   router.use('/auth', createAuthRouter({ authRateLimit }));
   router.use('/users', userRouter);
   router.use('/workspaces', workspaceRouter);
+  router.use('/habits', habitRouter);
   return router;
 }

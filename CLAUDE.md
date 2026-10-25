@@ -121,7 +121,16 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 **Plans / entitlements**
 - The `plans` table holds `code` (`free`, `pro`), `name`, `limits` JSONB (`{ "maxActiveHabits": 10, "historyDays": null }`, `null` = unlimited) and `features` JSONB. It is seeded by a seeder, and limits are never hard-coded in services. `pro` is active but `features.purchasable = false` until billing exists (ADR-026).
 - A workspace without an active row in `workspace_subscriptions` uses the `free` plan.
-- Creating or restoring a habit beyond `limits.maxActiveHabits` → 403 `PLAN_LIMIT_REACHED`.
+- Creating or restoring a habit beyond `limits.maxActiveHabits` → 403 `PLAN_LIMIT_REACHED` with `details: { limit, current }`. Enforced by `entitlementService.assertCanCreateActiveHabit(workspace, { transaction })`, which locks the workspace row so concurrent requests can't exceed the limit (ADR-036). Archived habits don't count.
+
+**Habit management** (ADR-035, ADR-037)
+- JSON fields: `name`, `description`, `category`, `color` (`#RRGGBB`), `icon`, `frequencyType`, `weekdays` (ISO 1–7, unique, non-empty; only for `weekdays`, otherwise `null` in responses), `targetPerWeek` (1–7; only for `weekly_target`), `startDate`, `status`, `archivedAt`, `sortOrder`. Empty optional strings become `null`.
+- `startDate` defaults to today in the user's timezone. Past dates are allowed (backfill); dates more than 1 year after today → 422.
+- The cross-field schedule rules live in one pure function, `habitStateIssues()` (validators/habitValidators.js). Create runs it in Zod. PATCH runs it in `habitService` on the body **merged** with the stored habit. Fields not sent carry over only while `frequencyType` is unchanged: leaving `weekly_target` clears `targetPerWeek`, and leaving `weekdays` deletes the schedule days.
+- PATCH `status` archives or restores. While archived, only `name` / `description` may change unless the same request restores the habit → otherwise 409 `HABIT_ARCHIVED` with `details.fields`.
+- Archive and unarchive are idempotent. New habits get `sortOrder = max + 1`. List order: `sortOrder`, then `createdAt`, then `id`.
+- `PATCH /habits/reorder { items: [{ id, sortOrder }] }` is all-or-nothing: any id not in the workspace → 404 and nothing changes.
+- Scheduling is decided by `domain/schedule.js` `isScheduledOn(habit, scheduleDays, isoDate)` (pure; never before `startDate`).
 
 ---
 
@@ -134,10 +143,11 @@ routes -> validators (Zod) -> controllers (HTTP only) -> services (business logi
 - **routes/**: path + middleware wiring only. `routes/index.js` mounts every router under `/api/v1`.
 - **validators/**: Zod schemas for `body`, `params` and `query`, applied by `validate({ body, params, query })` (`middleware/validate.js`). The parsed output (coerced, defaults applied, unknown keys stripped) **replaces** `req.body` / `req.params` / `req.query`. Validation failure → 422 `VALIDATION_ERROR` with `details: [{ location, path, message }]`.
 - **controllers/**: read the validated input, call one service, and shape the HTTP response. **Controllers never query the DB directly** and never import models.
-- **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`.
+- **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`. Workspace-scoped services take the workspace id first and always query by `(id, workspaceId)` together. Current services: `auth`, `user`, `workspace`, `entitlement`, `habit`, `health`.
+- **domain/**: pure business rules with no DB, HTTP or clock access, unit-tested directly. `dates.js` (`todayIn(tz, now)`, `isValidIsoDate`, `isoWeekday`, `addToDate`) and `schedule.js` (`isScheduledOn`). Calendar dates are `'YYYY-MM-DD'` strings, compared as strings.
 - **models/**: Sequelize models and associations only. `models/index.js` creates the shared `sequelize` instance and exports every model (`import { sequelize, User, Habit } from '../models/index.js'`). One class per file with `static initModel(sequelize)` and `static associate(models)`; index.js inits all, then associates all. `constants.js` holds the allowed enum values. Model validators mirror the DB CHECKs. `User`'s default scope excludes `passwordHash`; only login code uses `User.scope('withPassword')`, and `toJSON()` always strips it. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside test setup helpers. Schema reference: [docs/ERD.md](docs/ERD.md).
 - **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter`, `createAuthRateLimiter` → 429 via the error handler), `auth` (`requireAuth`), `csrf` (`csrfProtection`), `workspace` (`resolveWorkspace`, `requireRole`). See "Auth flow" below for the order.
-- **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash) and `toPublicWorkspace(workspace, role)`. Controllers never `res.json()` a model instance.
+- **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash), `toPublicWorkspace(workspace, role)` and `toPublicHabit(habit)` (needs `scheduleDays` loaded). Controllers never `res.json()` a model instance.
 - **jobs/**: node-cron jobs (session purge, notification generation and purge).
 - **config/**:
   - `env.js`: loads `backend/.env`, validates every variable with Zod and exits with a readable message if anything is invalid. Import `env` from here; never read `process.env` elsewhere in app code.
@@ -205,7 +215,19 @@ CSRF runs before validation so a forged request learns nothing from validation m
 
 **SPA bootstrap:** `GET /auth/csrf` (gets a CSRF cookie) → `GET /auth/me` (401 = show login) → send `X-CSRF-Token` with the `csrf_token` cookie value on every non-GET request, plus `credentials: 'include'`.
 
-**Implemented endpoints (Phase 3):** `POST /auth/signup`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET /auth/csrf`, `GET /workspaces`, `PATCH /users/me`, `PATCH /users/me/password`, `DELETE /users/me`.
+**Implemented endpoints:**
+- Phase 3: `POST /auth/signup`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`, `GET /auth/csrf`, `GET /workspaces`, `PATCH /users/me`, `PATCH /users/me/password`, `DELETE /users/me`.
+- Phase 4 (all workspace-scoped: `requireAuth → csrfProtection → resolveWorkspace`):
+  - `GET /habits?status=active|archived|all&category&search&page&limit` → `{ data, meta }`
+  - `POST /habits` → 201 `{ habit }`
+  - `GET /habits/categories` → `{ data: string[] }`
+  - `PATCH /habits/reorder` → 204
+  - `GET /habits/:id` → `{ habit, streaks: { current: null, longest: null } }` (streaks are filled in by Phase 5)
+  - `PATCH /habits/:id` → `{ habit }`
+  - `DELETE /habits/:id?permanent=true|false` → 204
+  - `POST /habits/:id/archive`, `POST /habits/:id/unarchive` → `{ habit }`
+
+  Routes with fixed paths (`/categories`, `/reorder`) are declared before `/:id`. A malformed `:id` → 422.
 
 ---
 
@@ -248,6 +270,7 @@ CSRF runs before validation so a forged request learns nothing from validation m
   - Call `truncateAllTables({ except })` from `helpers/db.js` in `beforeEach` of any DB-writing test.
   - Files run serially (`maxWorkers: 1`) because they share one database.
   - `helpers/auth.js`: `createTestApp()` (createApp with relaxed rate limits; rate-limit tests use `createApp()`), `seedPlans()` (call in `beforeAll`, then `truncateAllTables({ except: ['plans'] })`), `signupAgent(app)` / `loginAgent(app, creds)` (a cookie-keeping Supertest agent plus `csrfToken` and `sessionToken`), and `cookieValue(res, name)`.
+  - `helpers/habits.js`: `call(ctx, method, url, body?, headers?)` sends a request with the CSRF header; `createHabitViaApi(ctx, overrides?)` creates a habit through the API.
   - `helpers/factories.js` inserts valid rows (`createUser`, `createUserWithWorkspace`, `createHabit`) so tests only spell out the fields they care about.
   - Build apps with `createApp({ db })` to inject fakes. Use `unit/` for pure logic, `integration/` for HTTP tests, and `db/` for schema, model and seeder tests. To test a DB constraint rather than the model validator in front of it, pass `{ validate: false }` to `create()`.
 - Native ESM in Jest: `npm test` sets `NODE_OPTIONS=--experimental-vm-modules`. The `jest` object is not a global under ESM (`describe`, `it` and `expect` are). Import it from `@jest/globals` if needed.
@@ -301,3 +324,4 @@ CSRF runs before validation so a forged request learns nothing from validation m
 | 1 | Backend foundation: Zod-validated env, shared DB config, sequelize-cli wiring (.cjs), app/server split with graceful shutdown, helmet/cors/json/cookie-parser, pino-http with request IDs and redaction, validate(), AppError family, central error handler + 404, rate-limiter factory, `GET /api/v1/health`, Jest ESM harness (migrate once, truncate helper), ESLint + Prettier. 46 tests passing. No feature endpoints. |
 | 2 | Database schema: 11 migrations (users, sessions, plans, workspaces, workspace_members, workspace_subscriptions, habits, habit_schedule_days, habit_completions, habit_reminders, notifications) with named CHECK/UNIQUE constraints, partial unique index (one personal workspace per owner) and access-path indexes. 11 models + associations, User password scopes. Seeders: plans (free = 10 active habits, pro unlimited and not purchasable) and dev-only demo data. Test factories and `tests/db/` (constraints, cascades, model scopes/associations, seeders). docs/ERD.md. ADR-024 to ADR-028. Verified: migrate → undo:all → migrate on a fresh DB, seeders idempotent, 88 tests passing. No endpoints. |
 | 3 | Authentication and workspace authorization: authService (signup transaction, constant-time login, sessions with sliding expiry, logout/logoutAll, expired-session purge), userService (profile, password change revoking other sessions, account deletion), workspaceService (active workspace, listing, plan lookup). Middleware: requireAuth (cookie or Bearer), csrfProtection, resolveWorkspace (404 for non-members), requireRole, IP+email auth rate limiter and general /api limiter. Endpoints: auth signup/login/logout/me/csrf, GET /workspaces, PATCH/DELETE /users/me, PATCH /users/me/password. `toPublicUser` serializer, `runSessionCleanup` job (not yet scheduled). ADR-029 to ADR-034. 174 tests passing. Follow-ups: schedule the cleanup job (Phase 7); set Express `trust proxy` before deploying behind a proxy, so rate limits see client IPs. |
+| 4 | Habit management: `domain/` (pure `dates.js`, `schedule.js` `isScheduledOn`), `habitValidators.js` (field rules + shared cross-field `habitStateIssues`), `entitlementService` (plan limit with a workspace row lock), `habitService` (list/filter/search/paginate, get, create, merged-state update, archive/unarchive, archive-or-permanent delete, reorder, categories), `toPublicHabit` serializer, 9 `/habits` endpoints. ADR-035 to ADR-037. 295 tests passing (the concurrency test was confirmed to fail without the lock). Follow-up: streaks on `GET /habits/:id` are `null` placeholders until Phase 5. |

@@ -89,7 +89,8 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 **Pending vs missed**
 - `daily` / `weekdays`: a scheduled day D is **completed** if a completion exists, **pending** if D == today (user tz) and incomplete, and **missed** if D < today and incomplete. Future days are **upcoming**, not counted anywhere.
 - `weekly_target`: the current ISO week is **pending** until it ends (Sunday 23:59:59.999 in user tz), even if it is behind target. A past week is **met** if its completion count ≥ `target_per_week`, otherwise **missed**. An in-progress week is never treated as failed.
-- The first week of a `weekly_target` habit is evaluated against `target_per_week` only if `start_date` is a Monday. Otherwise the partial first week is excluded from streaks and rates.
+- The first week of a `weekly_target` habit is **prorated** (ADR-038, superseding the original "excluded unless it starts on Monday" rule): its target is `min(target_per_week, days from start_date to Sunday)`.
+- Day status for `weekly_target`: `completed` if done that day **or** the week already met its target; otherwise `pending` while the week runs, then `missed` (ADR-040). Full rules and examples: [docs/STREAK_RULES.md](docs/STREAK_RULES.md).
 
 **Streaks** (derived from completion history on read, not stored; recomputed automatically after historical edits)
 - `daily` / `weekdays`: current streak = number of consecutive *scheduled* days completed, counting back from today. If today is scheduled and still pending, counting starts from the previous scheduled day, so a pending today never breaks the streak. Unscheduled days are skipped and never break it.
@@ -99,11 +100,12 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 
 **Completable-date rules** (`PUT /habits/:id/completions/:date`)
 - `date` must be a valid `YYYY-MM-DD`, otherwise 422 `VALIDATION_ERROR`.
-- `start_date ≤ date ≤ today (user tz)`. Future date or a date before the start → 422 `DATE_NOT_COMPLETABLE`.
+- `start_date ≤ date ≤ today (user tz)`. Future date or a date before the start → 422 `DATE_NOT_COMPLETABLE` with `details.reason` `DATE_IN_FUTURE` / `BEFORE_START_DATE` (ADR-039).
 - For `weekdays` habits the date must be a scheduled weekday, otherwise 422 `DATE_NOT_SCHEDULED`.
 - The habit must be `active`. Archived → 409 `HABIT_ARCHIVED`. History of archived habits is read-only.
 - PUT is idempotent: 201 when created, 200 when it already exists. DELETE is idempotent: 204 whether or not a row existed.
 - `completed_by` = the authenticated user. `completed_at` = server `now()` in UTC.
+- Implementation: `INSERT … ON CONFLICT DO NOTHING RETURNING` + SELECT, inside a transaction holding `FOR SHARE` on the habit (race-safe; 5 concurrent PUTs → one row). An optional `note` (≤ 280) on an existing completion updates it.
 
 **Retention policy**
 - `DELETE /habits/:id` **archives** by default: `status = 'archived'`, `archived_at = now()`. History stays queryable, and analytics can include archived habits through a filter.
@@ -143,11 +145,11 @@ routes -> validators (Zod) -> controllers (HTTP only) -> services (business logi
 - **routes/**: path + middleware wiring only. `routes/index.js` mounts every router under `/api/v1`.
 - **validators/**: Zod schemas for `body`, `params` and `query`, applied by `validate({ body, params, query })` (`middleware/validate.js`). The parsed output (coerced, defaults applied, unknown keys stripped) **replaces** `req.body` / `req.params` / `req.query`. Validation failure → 422 `VALIDATION_ERROR` with `details: [{ location, path, message }]`.
 - **controllers/**: read the validated input, call one service, and shape the HTTP response. **Controllers never query the DB directly** and never import models.
-- **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`. Workspace-scoped services take the workspace id first and always query by `(id, workspaceId)` together. Current services: `auth`, `user`, `workspace`, `entitlement`, `habit`, `health`.
-- **domain/**: pure business rules with no DB, HTTP or clock access, unit-tested directly. `dates.js` (`todayIn(tz, now)`, `isValidIsoDate`, `isoWeekday`, `addToDate`) and `schedule.js` (`isScheduledOn`). Calendar dates are `'YYYY-MM-DD'` strings, compared as strings.
+- **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`. Workspace-scoped services take the workspace id first and always query by `(id, workspaceId)` together. Current services: `auth`, `user`, `workspace`, `entitlement`, `habit`, `completion`, `today`, `streak` (loads completions for many habits in **one** query; never query per habit in a loop), `health`.
+- **domain/**: pure business rules with no DB, HTTP or clock access, unit-tested directly. `dates.js` (`todayIn(tz, now)`, `isValidIsoDate`, `isoWeekday`, `addToDate`, `addDays`, `daysBetween`, `weekBounds`, `eachDay`), `schedule.js` (`isScheduledOn`) and `streaks.js` (`computeStreak`, `dayStatus`, `weekProgress`, `weekTarget`). Rules: [docs/STREAK_RULES.md](docs/STREAK_RULES.md). Calendar dates are `'YYYY-MM-DD'` strings, compared as strings.
 - **models/**: Sequelize models and associations only. `models/index.js` creates the shared `sequelize` instance and exports every model (`import { sequelize, User, Habit } from '../models/index.js'`). One class per file with `static initModel(sequelize)` and `static associate(models)`; index.js inits all, then associates all. `constants.js` holds the allowed enum values. Model validators mirror the DB CHECKs. `User`'s default scope excludes `passwordHash`; only login code uses `User.scope('withPassword')`, and `toJSON()` always strips it. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside test setup helpers. Schema reference: [docs/ERD.md](docs/ERD.md).
 - **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter`, `createAuthRateLimiter` → 429 via the error handler), `auth` (`requireAuth`), `csrf` (`csrfProtection`), `workspace` (`resolveWorkspace`, `requireRole`). See "Auth flow" below for the order.
-- **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash), `toPublicWorkspace(workspace, role)` and `toPublicHabit(habit)` (needs `scheduleDays` loaded). Controllers never `res.json()` a model instance.
+- **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash), `toPublicWorkspace(workspace, role)`, `toPublicHabit(habit)` (needs `scheduleDays` loaded) and `toPublicCompletion(completion)`. Controllers never `res.json()` a model instance.
 - **jobs/**: node-cron jobs (session purge, notification generation and purge).
 - **config/**:
   - `env.js`: loads `backend/.env`, validates every variable with Zod and exits with a readable message if anything is invalid. Import `env` from here; never read `process.env` elsewhere in app code.
@@ -222,12 +224,17 @@ CSRF runs before validation so a forged request learns nothing from validation m
   - `POST /habits` → 201 `{ habit }`
   - `GET /habits/categories` → `{ data: string[] }`
   - `PATCH /habits/reorder` → 204
-  - `GET /habits/:id` → `{ habit, streaks: { current: null, longest: null } }` (streaks are filled in by Phase 5)
+  - `GET /habits/:id` → `{ habit, streaks: { current, longest, unit, status, weekProgress? } }` (the requesting user's, as of today)
   - `PATCH /habits/:id` → `{ habit }`
   - `DELETE /habits/:id?permanent=true|false` → 204
   - `POST /habits/:id/archive`, `POST /habits/:id/unarchive` → `{ habit }`
 
   Routes with fixed paths (`/categories`, `/reorder`) are declared before `/:id`. A malformed `:id` → 422.
+- Phase 5 (workspace-scoped):
+  - `PUT /habits/:id/completions/:date` `{ note? }` → 201 / 200 `{ completion }`
+  - `DELETE /habits/:id/completions/:date` → 204
+  - `GET /completions?from&to&habitId&page&limit` → `{ data, meta }` (own completions; range required, ≤ 366 days)
+  - `GET /today?date` → `{ date, today, habits: [{ habit, completed, completion, status, streak: { current, longest, unit }, weekProgress? }], summary: { scheduled, completed, remaining, percent } }`
 
 ---
 
@@ -270,6 +277,7 @@ CSRF runs before validation so a forged request learns nothing from validation m
   - Call `truncateAllTables({ except })` from `helpers/db.js` in `beforeEach` of any DB-writing test.
   - Files run serially (`maxWorkers: 1`) because they share one database.
   - `helpers/auth.js`: `createTestApp()` (createApp with relaxed rate limits; rate-limit tests use `createApp()`), `seedPlans()` (call in `beforeAll`, then `truncateAllTables({ except: ['plans'] })`), `signupAgent(app)` / `loginAgent(app, creds)` (a cookie-keeping Supertest agent plus `csrfToken` and `sessionToken`), and `cookieValue(res, name)`.
+  - Time-dependent API tests either inject `createTestApp({ now })` or use Jest fake timers faking **only** `Date` (`jest.useFakeTimers({ now, doNotFake: [...all timer APIs] })`), since faked timers would stall the DB driver and Supertest. See `tests/integration/today.test.js`.
   - `helpers/habits.js`: `call(ctx, method, url, body?, headers?)` sends a request with the CSRF header; `createHabitViaApi(ctx, overrides?)` creates a habit through the API.
   - `helpers/factories.js` inserts valid rows (`createUser`, `createUserWithWorkspace`, `createHabit`) so tests only spell out the fields they care about.
   - Build apps with `createApp({ db })` to inject fakes. Use `unit/` for pure logic, `integration/` for HTTP tests, and `db/` for schema, model and seeder tests. To test a DB constraint rather than the model validator in front of it, pass `{ validate: false }` to `create()`.
@@ -325,3 +333,4 @@ CSRF runs before validation so a forged request learns nothing from validation m
 | 2 | Database schema: 11 migrations (users, sessions, plans, workspaces, workspace_members, workspace_subscriptions, habits, habit_schedule_days, habit_completions, habit_reminders, notifications) with named CHECK/UNIQUE constraints, partial unique index (one personal workspace per owner) and access-path indexes. 11 models + associations, User password scopes. Seeders: plans (free = 10 active habits, pro unlimited and not purchasable) and dev-only demo data. Test factories and `tests/db/` (constraints, cascades, model scopes/associations, seeders). docs/ERD.md. ADR-024 to ADR-028. Verified: migrate → undo:all → migrate on a fresh DB, seeders idempotent, 88 tests passing. No endpoints. |
 | 3 | Authentication and workspace authorization: authService (signup transaction, constant-time login, sessions with sliding expiry, logout/logoutAll, expired-session purge), userService (profile, password change revoking other sessions, account deletion), workspaceService (active workspace, listing, plan lookup). Middleware: requireAuth (cookie or Bearer), csrfProtection, resolveWorkspace (404 for non-members), requireRole, IP+email auth rate limiter and general /api limiter. Endpoints: auth signup/login/logout/me/csrf, GET /workspaces, PATCH/DELETE /users/me, PATCH /users/me/password. `toPublicUser` serializer, `runSessionCleanup` job (not yet scheduled). ADR-029 to ADR-034. 174 tests passing. Follow-ups: schedule the cleanup job (Phase 7); set Express `trust proxy` before deploying behind a proxy, so rate limits see client IPs. |
 | 4 | Habit management: `domain/` (pure `dates.js`, `schedule.js` `isScheduledOn`), `habitValidators.js` (field rules + shared cross-field `habitStateIssues`), `entitlementService` (plan limit with a workspace row lock), `habitService` (list/filter/search/paginate, get, create, merged-state update, archive/unarchive, archive-or-permanent delete, reorder, categories), `toPublicHabit` serializer, 9 `/habits` endpoints. ADR-035 to ADR-037. 295 tests passing (the concurrency test was confirmed to fail without the lock). Follow-up: streaks on `GET /habits/:id` are `null` placeholders until Phase 5. |
+| 5 | Completions and streaks: pure `domain/streaks.js` (day/week streaks, pending vs missed, prorated first week, day status, week progress) with 51 hand-written cases plus a randomized cross-check against a naive reference implementation (600 histories; confirmed to catch planted bugs). `completionService` (race-safe idempotent mark, idempotent unmark, history), `todayService` (dashboard in two queries, verified by a query-counting test), real streaks on `GET /habits/:id`. Endpoints: PUT/DELETE completions, GET /completions, GET /today. docs/STREAK_RULES.md. ADR-038 to ADR-040. |

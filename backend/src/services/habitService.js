@@ -15,6 +15,7 @@ import { ConflictError, NotFoundError, ValidationError } from '../utils/AppError
 import { now as systemNow } from '../utils/clock.js';
 import { habitStateIssues } from '../validators/habitValidators.js';
 import { assertCanCreateActiveHabit } from './entitlementService.js';
+import { loadCompletions, streakFor } from './streakService.js';
 
 /** Loads the weekdays with every habit we return (needed by the serializer). */
 const WITH_SCHEDULE = [{ association: 'scheduleDays', attributes: ['weekday'] }];
@@ -120,6 +121,28 @@ export async function getHabit(workspaceId, id) {
   const habit = await Habit.findOne({ where: { id, workspaceId }, include: WITH_SCHEDULE });
   if (!habit) throw new NotFoundError('Habit not found');
   return habit;
+}
+
+/**
+ * One habit plus the requesting user's streak for it (GET /habits/:id).
+ * The streak is derived from the user's full completion history on every read (ADR-007).
+ * For an archived habit it is evaluated as of today like any other, so days after archiving
+ * end the current streak while the longest streak is preserved.
+ * @param {string} workspaceId
+ * @param {string} id
+ * @param {{ user: { id: string, timezone: string }, now?: () => Date }} context
+ * @returns {Promise<{ habit: Habit, streak: ReturnType<typeof streakFor> }>}
+ */
+export async function getHabitDetail(workspaceId, id, { user, now = systemNow }) {
+  const habit = await getHabit(workspaceId, id);
+  const today = todayIn(user.timezone, now);
+  const completionsByHabit = await loadCompletions({
+    habitIds: [habit.id],
+    userId: user.id,
+    from: habit.startDate,
+    to: today,
+  });
+  return { habit, streak: streakFor(habit, completionsByHabit.get(habit.id), today) };
 }
 
 /**

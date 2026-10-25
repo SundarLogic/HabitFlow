@@ -25,12 +25,15 @@ export async function categories(req, res) {
 }
 
 /**
- * GET /habits/:id -> { habit, streaks }
- * streaks are placeholders (null) until the streak engine lands in Phase 5.
+ * GET /habits/:id -> { habit, streaks: { current, longest, unit, status, weekProgress? } }
+ * streaks are the requesting user's, as of today in their timezone.
  */
 export async function get(req, res) {
-  const habit = await habitService.getHabit(req.workspace.id, req.params.id);
-  res.json({ habit: toPublicHabit(habit), streaks: { current: null, longest: null } });
+  const { habit, streak } = await habitService.getHabitDetail(req.workspace.id, req.params.id, {
+    user: req.user,
+    now: clock(req),
+  });
+  res.json({ habit: toPublicHabit(habit), streaks: streak });
 }
 
 /** POST /habits -> 201 { habit } */

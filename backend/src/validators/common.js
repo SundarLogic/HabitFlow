@@ -3,6 +3,7 @@
  */
 import { IANAZone } from 'luxon';
 import { z } from 'zod';
+import { daysBetween, isValidIsoDate } from '../domain/dates.js';
 
 /**
  * `?page=1&limit=20` (CLAUDE.md §5). Query values arrive as strings, so z.coerce turns "2" into 2.
@@ -46,3 +47,30 @@ export const newPasswordSchema = z
 
 /** An existing password typed for confirmation. The max length only bounds hashing work. */
 export const existingPasswordSchema = z.string().min(1, 'is required').max(128);
+
+/** A calendar date 'YYYY-MM-DD' that really exists ('2026-02-30' is rejected). */
+export const isoDateSchema = z
+  .string()
+  .refine(isValidIsoDate, 'must be a real calendar date in YYYY-MM-DD format');
+
+/** Longest allowed ?from=&to= range, in days, both ends included (CLAUDE.md §5). */
+export const MAX_RANGE_DAYS = 366;
+
+/**
+ * Adds the CLAUDE.md §5 date-range rules to a query schema that has `from` and `to`:
+ * from <= to, and at most 366 days including both ends. Bounded ranges protect the database.
+ * @param {import('zod').ZodObject} schema
+ */
+export function withDateRange(schema) {
+  return schema.superRefine((query, ctx) => {
+    if (query.from > query.to) {
+      ctx.addIssue({ code: 'custom', path: ['from'], message: 'must be on or before `to`' });
+    } else if (daysBetween(query.from, query.to) + 1 > MAX_RANGE_DAYS) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['to'],
+        message: `range must be at most ${MAX_RANGE_DAYS} days`,
+      });
+    }
+  });
+}

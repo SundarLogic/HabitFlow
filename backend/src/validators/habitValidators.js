@@ -11,9 +11,8 @@
  * applied in habitService, which has the user and the clock.
  */
 import { z } from 'zod';
-import { isValidIsoDate } from '../domain/dates.js';
 import { FREQUENCY_TYPES, HABIT_STATUSES } from '../models/constants.js';
-import { paginationQuery } from './common.js';
+import { isoDateSchema, paginationQuery } from './common.js';
 
 /**
  * Optional free text: trimmed, '' becomes null (so "clear this field" can be sent either way).
@@ -26,10 +25,6 @@ const optionalText = (max) =>
     .max(max, `must be at most ${max} characters`)
     .transform((value) => (value === '' ? null : value))
     .nullable();
-
-const isoDate = z
-  .string()
-  .refine(isValidIsoDate, 'must be a real calendar date in YYYY-MM-DD format');
 
 const weekdays = z
   .array(z.number().int().min(1, 'must be 1-7').max(7, 'must be 1-7'))
@@ -51,7 +46,7 @@ const habitFields = {
   frequencyType: z.enum(FREQUENCY_TYPES),
   weekdays: weekdays.nullable(),
   targetPerWeek: targetPerWeek.nullable(),
-  startDate: isoDate,
+  startDate: isoDateSchema,
 };
 
 /**

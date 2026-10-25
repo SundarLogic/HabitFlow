@@ -94,7 +94,7 @@ describe('POST /habits', () => {
 });
 
 describe('GET /habits/:id', () => {
-  it('returns the habit with its schedule and streak placeholders', async () => {
+  it("returns the habit with its schedule and the user's streak", async () => {
     const ctx = await signup();
     const created = await createHabitViaApi(ctx, { frequencyType: 'weekdays', weekdays: [2, 4] });
     const res = await call(ctx, 'get', `/api/v1/habits/${created.id}`);
@@ -102,7 +102,8 @@ describe('GET /habits/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       habit: { ...created, weekdays: [2, 4] },
-      streaks: { current: null, longest: null },
+      // A Tue/Thu habit created on Saturday 24 Oct (New York): nothing is due today.
+      streaks: { current: 0, longest: 0, unit: 'days', status: 'not_scheduled' },
     });
   });
 

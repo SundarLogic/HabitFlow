@@ -65,3 +65,56 @@ export function isoWeekday(isoDate) {
   if (!date.isValid) throw new RangeError(`Invalid calendar date: ${isoDate}`);
   return date.weekday;
 }
+
+/** Parses a date that MUST be valid, or throws (inputs are validated before reaching here). */
+function requireDate(isoDate) {
+  const date = parseIsoDate(isoDate);
+  if (!date.isValid) throw new RangeError(`Invalid calendar date: ${isoDate}`);
+  return date;
+}
+
+/**
+ * Moves a calendar date by whole days: addDays('2024-02-28', 1) -> '2024-02-29'.
+ * Works on dates, not instants, so DST changes can't shift the result.
+ * @param {string} isoDate
+ * @param {number} days may be negative
+ * @returns {string}
+ */
+export function addDays(isoDate, days) {
+  return requireDate(isoDate).plus({ days }).toISODate();
+}
+
+/**
+ * Whole days from `from` to `to` (negative if `to` is earlier): daysBetween('2026-10-19',
+ * '2026-10-25') -> 6.
+ * @param {string} from
+ * @param {string} to
+ * @returns {number}
+ */
+export function daysBetween(from, to) {
+  return Math.round(requireDate(to).diff(requireDate(from), 'days').days);
+}
+
+/**
+ * The ISO week (Monday-Sunday, ADR-006) containing a date.
+ * @param {string} isoDate
+ * @returns {{ start: string, end: string }} Monday and Sunday as 'YYYY-MM-DD'
+ */
+export function weekBounds(isoDate) {
+  const date = requireDate(isoDate);
+  // Luxon weeks are ISO weeks (Monday first) regardless of the server locale.
+  return { start: date.startOf('week').toISODate(), end: date.endOf('week').toISODate() };
+}
+
+/**
+ * Every date from `from` to `to`, both included: eachDay('2026-10-30', '2026-11-02') ->
+ * ['2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02']. Empty when from > to.
+ * @param {string} from
+ * @param {string} to
+ * @returns {string[]}
+ */
+export function eachDay(from, to) {
+  const days = [];
+  for (let day = from; day <= to; day = addDays(day, 1)) days.push(day);
+  return days;
+}

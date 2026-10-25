@@ -3,17 +3,19 @@
  *
  * Every route: requireAuth -> csrfProtection (unsafe methods) -> resolveWorkspace, then
  * validate -> controller. Any member of the active workspace may manage its habits (team roles
- * arrive with team features).
+ * arrive with team features). Completions are nested here: /habits/:id/completions/:date.
  *
  * ORDER MATTERS: Express matches routes top to bottom, so the fixed paths /categories and
  * /reorder must come before /:id, or "reorder" would be treated as a habit id.
  */
 import { Router } from 'express';
+import * as completionController from '../controllers/completionController.js';
 import * as habitController from '../controllers/habitController.js';
 import { requireAuth } from '../middleware/auth.js';
 import { csrfProtection } from '../middleware/csrf.js';
 import { validate } from '../middleware/validate.js';
 import { resolveWorkspace } from '../middleware/workspace.js';
+import { completionParams, markCompletionBody } from '../validators/completionValidators.js';
 import {
   createHabitBody,
   deleteHabitQuery,
@@ -45,3 +47,15 @@ habitRouter.delete(
 );
 habitRouter.post('/:id/archive', validate({ params: habitIdParams }), habitController.archive);
 habitRouter.post('/:id/unarchive', validate({ params: habitIdParams }), habitController.unarchive);
+
+// Completions: PUT marks a date done (idempotent: 201 new / 200 existing), DELETE undoes it (204).
+habitRouter.put(
+  '/:id/completions/:date',
+  validate({ params: completionParams, body: markCompletionBody }),
+  completionController.mark,
+);
+habitRouter.delete(
+  '/:id/completions/:date',
+  validate({ params: completionParams }),
+  completionController.unmark,
+);

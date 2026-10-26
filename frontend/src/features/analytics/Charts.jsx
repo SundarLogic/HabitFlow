@@ -10,6 +10,7 @@
  */
 import { DateTime } from 'luxon';
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { usePrefersReducedMotion } from '../../hooks/usePrefersReducedMotion.js';
 import { ChartFigure, formatRate } from './ChartFigure.jsx';
 
 const BAR = 'var(--hf-completed)';
@@ -35,9 +36,15 @@ function RateTooltip({ active, payload }) {
 }
 
 function PercentBars({ data, horizontal = false }) {
+  // Bars grow in with a JavaScript animation, which the global CSS reduced-motion rule can't stop.
+  const reduceMotion = usePrefersReducedMotion();
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart
+        // Recharts 3 adds a focusable keyboard layer to charts. Ours are aria-hidden pictures with
+        // a data table next to them, so a focusable element inside would be invisible to screen
+        // readers (axe: aria-hidden-focus).
+        accessibilityLayer={false}
         data={data}
         layout={horizontal ? 'vertical' : 'horizontal'}
         margin={{ top: 4, right: 8, bottom: 0, left: horizontal ? 8 : -16 }}
@@ -60,7 +67,12 @@ function PercentBars({ data, horizontal = false }) {
           </>
         )}
         <Tooltip content={<RateTooltip />} cursor={{ fill: 'var(--hf-surface-muted)' }} />
-        <Bar dataKey="percent" fill={BAR} radius={horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]} />
+        <Bar
+          dataKey="percent"
+          fill={BAR}
+          radius={horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]}
+          isAnimationActive={!reduceMotion}
+        />
       </BarChart>
     </ResponsiveContainer>
   );

@@ -5,6 +5,7 @@
  *   toast.success('Habit saved');
  *   toast.error(error.message);
  *   toast.show({ title: 'Heads up', description: '...', tone: 'info', duration: 8000 });
+ *   toast.error("Couldn't save", { action: { label: 'Retry', onClick: save } });
  *
  * Accessibility: toasts live in a polite live region (errors in an assertive one), so screen
  * readers announce them without stealing focus. Each has a close button, and the auto-dismiss
@@ -13,7 +14,7 @@
 import { CheckCircle2, Info, TriangleAlert, X } from 'lucide-react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { cn } from '../../lib/cn.js';
-import { IconButton } from './Button.jsx';
+import { Button, IconButton } from './Button.jsx';
 
 const ToastContext = createContext(null);
 const ICONS = { success: CheckCircle2, error: TriangleAlert, info: Info };
@@ -47,6 +48,18 @@ function ToastItem({ toast, onDismiss }) {
         <p className="font-medium text-fg">{toast.title}</p>
         {toast.description && <p className="mt-0.5 text-fg-muted">{toast.description}</p>}
       </div>
+      {toast.action && (
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            onDismiss(toast.id);
+            toast.action.onClick();
+          }}
+        >
+          {toast.action.label}
+        </Button>
+      )}
       <IconButton
         label="Dismiss notification"
         icon={X}
@@ -65,9 +78,17 @@ export function ToastProvider({ children }) {
     setToasts((current) => current.filter((t) => t.id !== id));
   }, []);
 
-  const show = useCallback(({ title, description, tone = 'info', duration = 5000 }) => {
+  const show = useCallback(({ title, description, tone = 'info', duration = 5000, action }) => {
     nextId += 1;
-    const toast = { id: nextId, title, description, tone, duration };
+    // A toast with an action stays longer, so there is time to reach the button.
+    const toast = {
+      id: nextId,
+      title,
+      description,
+      tone,
+      action,
+      duration: action ? 12_000 : duration,
+    };
     setToasts((current) => [...current.slice(-2), toast]); // at most 3 on screen
     return toast.id;
   }, []);

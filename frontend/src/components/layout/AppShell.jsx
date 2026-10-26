@@ -14,6 +14,7 @@ import { NotificationBell } from '../../features/notifications/NotificationBell.
 import { cn } from '../../lib/cn.js';
 import { useTheme } from '../../lib/theme.jsx';
 import { IconButton } from '../ui/index.js';
+import { ConnectionStatus } from './ConnectionStatus.jsx';
 import { Logo } from './Logo.jsx';
 import { NAV_ITEMS } from './navigation.js';
 import { UserMenu } from './UserMenu.jsx';
@@ -117,6 +118,7 @@ export function AppShell() {
             <UserMenu />
           </div>
         </header>
+        <ConnectionStatus />
         {/* tabIndex -1 lets the skip link move focus here; pb-20 keeps content above the bottom bar. */}
         <main id="main-content" tabIndex={-1} className="flex-1 px-4 py-6 pb-24 md:px-8 md:pb-8">
           <div className="mx-auto max-w-5xl">

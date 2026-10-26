@@ -26,7 +26,7 @@ import { scheduleSummary, streakLabel } from '../habits/schedule.js';
 import { useToggleCompletion } from './useToggleCompletion.js';
 
 const TOGGLE_STYLES = {
-  done: 'border-status-completed bg-status-completed text-white',
+  done: 'border-status-completed bg-status-completed text-on-completed',
   open: 'border-border text-transparent hover:border-status-completed hover:text-status-completed/40',
   missed: 'border-dashed border-status-missed text-transparent hover:text-status-missed/50',
 };

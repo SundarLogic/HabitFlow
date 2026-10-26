@@ -27,7 +27,7 @@ export function DateNavigator({ date, today, onChange }) {
         value={date}
         max={today}
         onChange={(event) => event.target.value && onChange(event.target.value)}
-        className="h-10 rounded-lg border border-border bg-surface-raised px-3 text-sm text-fg focus-visible:outline-2 focus-visible:outline-ring"
+        className="h-10 rounded-lg border border-border bg-surface-raised px-3 text-sm text-fg focus-within:outline-2 focus-within:outline-ring"
       />
       <IconButton
         label="Next day"

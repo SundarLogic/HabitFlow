@@ -38,7 +38,7 @@ export function toAppError(err) {
   // Order matters: UniqueConstraintError is a subclass of Sequelize's ValidationError,
   // so this check must come before the generic SequelizeValidationError check below.
   if (err instanceof UniqueConstraintError) {
-    return new ConflictError('A resource with these values already exists', {
+    return new ConflictError('This already exists. Refresh the page to see the latest data.', {
       code: 'UNIQUE_VIOLATION',
       // Only field NAMES (e.g. ['email']), never the values, which could be personal data.
       details: { fields: Object.keys(err.fields ?? {}) },
@@ -50,14 +50,17 @@ export function toAppError(err) {
     const detail = err.parent?.detail ?? ''; // PostgreSQL's explanation text
     // a) Deleting a row that other rows still point to -> 409 Conflict.
     if (detail.includes('is still referenced')) {
-      return new ConflictError('The resource is still referenced by other records', {
+      return new ConflictError("This can't be deleted because other data still depends on it.", {
         code: 'RESOURCE_IN_USE',
       });
     }
     // b) Inserting/updating a row that points to a row that doesn't exist -> 422.
-    return new ValidationError('A referenced resource does not exist', {
-      code: 'INVALID_REFERENCE',
-    });
+    return new ValidationError(
+      'Something this refers to no longer exists. Refresh the page and try again.',
+      {
+        code: 'INVALID_REFERENCE',
+      },
+    );
   }
 
   // Validation rules defined on Sequelize models (e.g. allowNull: false) failed.

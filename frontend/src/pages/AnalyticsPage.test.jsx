@@ -9,9 +9,11 @@ import { db, fakeToday, key, makeHabit } from '../test/fakeHabits.js';
 import { currentUrl, renderApp, statValue } from '../test/renderApp.jsx';
 import { backend } from '../test/server.js';
 
-// The page is lazy-loaded; importing it once up front keeps the first test from timing out
-// while Recharts is transformed.
-beforeAll(() => import('./AnalyticsPage.jsx'));
+// The page and its charts are lazy-loaded chunks; importing them once up front keeps the first
+// test from timing out while Recharts is transformed.
+beforeAll(() =>
+  Promise.all([import('./AnalyticsPage.jsx'), import('../features/analytics/ChartsSection.jsx')]),
+);
 
 beforeEach(() => {
   backend.loggedIn = true;
@@ -40,7 +42,7 @@ it('shows the rate and charts (with data tables) once habits were due', async ()
   expect(await statValue('Completed')).toBe('3 / 6');
   expect(screen.queryByText('No scheduled habits in this period')).not.toBeInTheDocument();
   for (const name of [/daily completion/i, /weekly completion/i, /by habit/i, /by category/i]) {
-    expect(screen.getByRole('figure', { name })).toBeInTheDocument();
+    expect(await screen.findByRole('figure', { name })).toBeInTheDocument();
   }
 });
 

@@ -44,6 +44,7 @@ import { now as systemNow } from './utils/clock.js';
  * @param {() => Date} [deps.now] clock used by auth (session expiry); tests can freeze time
  * @param {{ api?: { windowMs: number, limit: number }, auth?: { windowMs: number, limit: number } }}
  *   [deps.rateLimits] override the rate limits (tests use tiny ones)
+ * @param {number} [deps.trustProxy] number of reverse proxies in front (env TRUST_PROXY)
  * @returns {import('express').Express}
  */
 export function createApp({
@@ -51,8 +52,13 @@ export function createApp({
   logger = defaultLogger,
   now = systemNow,
   rateLimits = {},
+  trustProxy = env.TRUST_PROXY,
 } = {}) {
   const app = express();
+
+  // How many proxies' X-Forwarded-For entries to believe when working out req.ip. 0 = ignore
+  // the header entirely, so a client can't spoof its IP to dodge the rate limits.
+  app.set('trust proxy', trustProxy);
 
   // app.locals is a place to store app-wide values. Controllers read the db from here
   // (req.app.locals.db) so tests can swap it out.

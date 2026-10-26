@@ -11,6 +11,7 @@
  */
 import { useQuery } from '@tanstack/react-query';
 import { BarChart3, CalendarCheck, Flame, Percent, Target } from 'lucide-react';
+import { Suspense, lazy } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '../components/layout/PageHeader.jsx';
 import {
@@ -27,18 +28,15 @@ import {
 } from '../components/ui/index.js';
 import { fetchSummary } from '../features/analytics/api.js';
 import { formatRate } from '../features/analytics/ChartFigure.jsx';
-import {
-  ByCategoryChart,
-  ByHabitChart,
-  DailyRateChart,
-  WeeklyChart,
-} from '../features/analytics/Charts.jsx';
 import { Heatmap } from '../features/analytics/Heatmap.jsx';
 import { HistoryList } from '../features/analytics/HistoryList.jsx';
 import { RANGE_PRESETS, resolveRange } from '../features/analytics/ranges.js';
 import { useAuth } from '../features/auth/AuthProvider.jsx';
 import { listHabits } from '../features/habits/api.js';
 import { todayIn } from '../lib/dates.js';
+
+// Recharts is loaded only when there is something to chart (see ChartsSection).
+const ChartsSection = lazy(() => import('../features/analytics/ChartsSection.jsx'));
 import { queryKeys } from '../lib/queryClient.js';
 
 export function AnalyticsPage() {
@@ -202,24 +200,9 @@ export function AnalyticsPage() {
                 />
               </Card>
             ) : (
-              <div className="grid gap-5 lg:grid-cols-2">
-                <div className="lg:col-span-2">
-                  <DailyRateChart daily={summary.daily} />
-                </div>
-                <WeeklyChart weekly={summary.weekly} />
-                {habitId ? (
-                  <ByCategoryChart byCategory={summary.byCategory} />
-                ) : (
-                  <ByHabitChart byHabit={summary.byHabit.filter((h) => h.scheduled > 0)} />
-                )}
-                {!habitId && (
-                  <div className="lg:col-span-2">
-                    <ByCategoryChart
-                      byCategory={summary.byCategory.filter((c) => c.scheduled > 0)}
-                    />
-                  </div>
-                )}
-              </div>
+              <Suspense fallback={<Skeleton className="h-80 w-full" />}>
+                <ChartsSection summary={summary} habitId={habitId} />
+              </Suspense>
             )}
           </>
         )}

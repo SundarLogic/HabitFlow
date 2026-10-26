@@ -74,6 +74,17 @@ describe('due reminders across timezones', () => {
     expect(await Notification.count()).toBe(2);
   });
 
+  it("skips a reminder once its user is no longer a member of the habit's workspace", async () => {
+    // Nothing in the API removes a member yet; this guards the future "leave workspace" feature,
+    // so a former member never receives that workspace's habit names (Phase 11 hardening).
+    const { ctx } = await userWithReminder('America/New_York', '09:00');
+    await sequelize.query('DELETE FROM workspace_members WHERE user_id = :userId', {
+      replacements: { userId: ctx.user.id },
+    });
+    expect(await tick()).toMatchObject({ considered: 0, sent: 0 });
+    expect(await Notification.count()).toBe(0);
+  });
+
   it('seconds inside the minute do not matter', async () => {
     await userWithReminder('America/New_York', '09:00');
     expect(await tick(new Date('2026-10-28T13:00:59Z'))).toMatchObject({ sent: 1 });

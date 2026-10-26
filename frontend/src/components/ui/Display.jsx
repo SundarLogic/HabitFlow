@@ -65,8 +65,20 @@ export function Skeleton({ className }) {
   );
 }
 
-/** Friendly "nothing here yet" message with an optional call to action. */
-export function EmptyState({ icon: Icon, title, description, action, className }) {
+/**
+ * Friendly "nothing here yet" message with an optional call to action.
+ * headingLevel: 2 inside a page (default); 1 when the empty state IS the page (404, "Habit not
+ * found"), so every page still has exactly one <h1>.
+ */
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+  headingLevel = 2,
+  className,
+}) {
+  const Heading = `h${headingLevel}`;
   return (
     <div className={cn('flex flex-col items-center px-4 py-12 text-center', className)}>
       {Icon && (
@@ -74,7 +86,7 @@ export function EmptyState({ icon: Icon, title, description, action, className }
           <Icon aria-hidden="true" className="h-6 w-6" />
         </div>
       )}
-      <h2 className="text-lg font-semibold text-fg">{title}</h2>
+      <Heading className="text-lg font-semibold text-fg">{title}</Heading>
       {description && <p className="mt-1 max-w-sm text-sm text-fg-muted">{description}</p>}
       {action && <div className="mt-6">{action}</div>}
     </div>

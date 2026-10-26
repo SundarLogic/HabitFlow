@@ -43,7 +43,7 @@ Missing a day must never produce punitive feedback. Core tracking stays useful o
 |---|---|
 | Frontend | **JavaScript** (no TypeScript). React 19 + Vite, React Router 7, TanStack Query 5, Tailwind CSS 4, Recharts, axios, react-hook-form + Zod (`@hookform/resolvers` 5.x), Luxon, clsx, lucide-react (ADR-045) |
 | Backend | Node ≥ 20 (exact LTS pin pending), Express 5, PostgreSQL 16, Sequelize + sequelize-cli (pg, pg-hstore), Zod 4, Luxon, bcrypt, pino + pino-http, helmet, cors, cookie-parser, express-rate-limit, dotenv, node-cron |
-| Testing | Jest + Supertest (backend), Vitest + React Testing Library + jest-dom + MSW (frontend), Playwright (E2E) |
+| Testing | Jest + Supertest (backend), Vitest + React Testing Library + jest-dom + MSW (frontend), Playwright + @axe-core/playwright (E2E and accessibility, ADR-054) |
 | Backend tooling | nodemon, ESLint (flat config: @eslint/js, globals, eslint-config-prettier), Prettier, cross-env |
 | Frontend tooling | ESLint (flat config + eslint-plugin-react-hooks), Prettier, jsdom |
 | Local infra | Docker Compose (PostgreSQL 16, databases `habitflow_dev` and `habitflow_test`) |
@@ -71,7 +71,7 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 - `Authorization: Bearer <token>` is accepted as an alternative to the cookie. The cookie wins if both are sent. **CSRF checks apply only to cookie-authenticated requests**, not Bearer.
 - Passwords: 8–128 characters with at least one letter and one number (Unicode-aware). Stored as `bcrypt(base64(sha256(password)))` with cost 12 (ADR-030); always use `utils/password.js`. Login failures return a generic 401 `INVALID_CREDENTIALS` and do not reveal whether the email exists: bcrypt runs against a dummy hash for unknown emails. A wrong current password on password change or account deletion → 422 `INVALID_CURRENT_PASSWORD`.
 - Emails are trimmed and lowercased (validator, model setter and DB CHECK).
-- Rate limits (ADR-033): signup and login share 10 requests per 15 min per IP + email. All of `/api` allows 300 per 15 min per IP. Over the limit → 429 `RATE_LIMITED`.
+- Rate limits (ADR-033, ADR-053): signup and login share 10 requests per 15 min per IP + email (`AUTH_RATE_LIMIT_MAX`). All of `/api` allows 300 per 15 min per IP (`API_RATE_LIMIT_MAX`). Over the limit → 429 `RATE_LIMITED`. `req.ip` honours `X-Forwarded-For` only for `TRUST_PROXY` proxies (default 0).
 - `csrf_token` cookie: random, **not** HttpOnly (the SPA must read it), SameSite=Lax, Secure in production. It is rotated at signup and login, and `GET /auth/csrf` issues or refreshes it. The server compares it to the `X-CSRF-Token` header in constant time. Mismatch → 403 `CSRF_TOKEN_INVALID`. Signup and login are not CSRF-checked (ADR-034).
 - Password change revokes every **other** session of the user, keeping the current one.
 
@@ -151,22 +151,24 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 routes -> validators (Zod) -> controllers (HTTP only) -> services (business logic, transactions) -> models
 ```
 
-- **routes/**: path + middleware wiring only. `routes/index.js` mounts every router under `/api/v1`.
+- **routes/**: path + middleware wiring only. `routes/index.js` mounts every router under `/api/v1` from the `apiMounts()` table. **Every protected route runs `requireAuth` then `csrfProtection`** (a no-op for GET), and workspace features add `resolveWorkspace`; `tests/integration/routeGuards.test.js` walks the real routers and fails on any route that doesn't (ADR-053).
 - **validators/**: Zod schemas for `body`, `params` and `query`, applied by `validate({ body, params, query })` (`middleware/validate.js`). The parsed output (coerced, defaults applied, unknown keys stripped) **replaces** `req.body` / `req.params` / `req.query`. Validation failure → 422 `VALIDATION_ERROR` with `details: [{ location, path, message }]`.
 - **controllers/**: read the validated input, call one service, and shape the HTTP response. **Controllers never query the DB directly** and never import models.
-- **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`. Workspace-scoped services take the workspace id first and always query by `(id, workspaceId)` together. Current services: `auth`, `user`, `workspace`, `entitlement`, `habit`, `completion`, `today`, `analytics` (summary, heatmap, habit history: two queries each), `reminder` (CRUD), `reminderDispatch` (the scheduler's work: 4 queries per tick), `milestone`, `notification` (inbox + purge), `notifications/` (delivery channels + `dispatchNotification`), `streak` (loads completions for many habits in **one** query; never query per habit in a loop), `health`.
-- **domain/**: pure business rules with no DB, HTTP or clock access, unit-tested directly. `dates.js` (`todayIn(tz, now)`, `isValidIsoDate`, `isoWeekday`, `addToDate`, `addDays`, `daysBetween`, `weekBounds`, `eachDay`), `schedule.js` (`isScheduledOn`) and `streaks.js` (`computeStreak`, `dayStatus`, `weekProgress`, `weekTarget`) and `analytics.js` (`scheduledInstances`, `completionRate`, `summarize`, `habitHistory`). Rules: [docs/STREAK_RULES.md](docs/STREAK_RULES.md). Calendar dates are `'YYYY-MM-DD'` strings, compared as strings.
+- **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`. Workspace-scoped services take the workspace id first and always query by `(id, workspaceId)` together. Current services: `auth`, `user`, `workspace`, `entitlement`, `habit`, `completion`, `today`, `analytics` (summary, heatmap, habit history: two queries each), `reminder` (CRUD), `reminderDispatch` (the scheduler's work: 4 queries per tick), `milestone`, `notification` (inbox + purge), `notifications/` (delivery channels + `dispatchNotification`), `streak` (loads completions for many habits in **one** query, as plain rows with the public columns; never query per habit in a loop), `health`.
+- **domain/**: pure business rules with no DB, HTTP or clock access, unit-tested directly. `dates.js` (integer day-number arithmetic with a parse memo, ADR-051; Luxon only for timezones and month/year maths: `todayIn(tz, now)`, `isValidIsoDate`, `isoWeekday`, `addToDate`, `addDays`, `daysBetween`, `weekBounds`, `eachDay`), `schedule.js` (`isScheduledOn`) and `streaks.js` (`computeStreak`, `dayStatus`, `weekProgress`, `weekTarget`) and `analytics.js` (`scheduledInstances`, `completionRate`, `summarize`, `habitHistory`). Rules: [docs/STREAK_RULES.md](docs/STREAK_RULES.md). Calendar dates are `'YYYY-MM-DD'` strings, compared as strings.
 - **models/**: Sequelize models and associations only. `models/index.js` creates the shared `sequelize` instance and exports every model (`import { sequelize, User, Habit } from '../models/index.js'`). One class per file with `static initModel(sequelize)` and `static associate(models)`; index.js inits all, then associates all. `constants.js` holds the allowed enum values. Model validators mirror the DB CHECKs. `User`'s default scope excludes `passwordHash`; only login code uses `User.scope('withPassword')`, and `toJSON()` always strips it. Schema changes go through **migrations** (`sequelize-cli`), never `sync()` outside test setup helpers. Schema reference: [docs/ERD.md](docs/ERD.md).
 - **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter`, `createAuthRateLimiter` → 429 via the error handler), `auth` (`requireAuth`), `csrf` (`csrfProtection`), `workspace` (`resolveWorkspace`, `requireRole`). See "Auth flow" below for the order.
+- **scripts/perf/**: `seed.js` (`npm run perf:seed`: 20 users x 50 habits x 2 years in the DEV database) and `bench.js` (`npm run perf:bench`: EXPLAIN ANALYZE of each endpoint's SQL and p50/p95 latency; exits 1 if a p95 is ≥ 200 ms). Re-run after changing the streak, analytics or today code.
 - **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash), `toPublicWorkspace(workspace, role)`, `toPublicHabit(habit)` (needs `scheduleDays` loaded), `toPublicCompletion(completion)`, `toPublicReminder(reminder)` (`remindAt` as `HH:mm`) and `toPublicNotification(notification)` (never exposes `dedupeKey`). Controllers never `res.json()` a model instance.
 - **jobs/**: node-cron jobs, started **only** by `server.js` via `jobs/index.js` `startJobs()` (never by `app.js`, so tests never start timers; nothing runs under `NODE_ENV=test`). `reminderScheduler.js` (every minute, `runReminderTick({ now })`, off when `REMINDERS_ENABLED=false`) and `housekeeping.js` (daily 03:15 UTC, `runHousekeeping({ now })`: expired sessions and notifications older than 90 days). Each exports its tick function so tests call it with a fake clock. `server.js` stops the jobs first on shutdown.
 - **config/**:
   - `env.js`: loads `backend/.env`, validates every variable with Zod and exits with a readable message if anything is invalid. Import `env` from here; never read `process.env` elsewhere in app code.
   - `database.cjs`: the single DB config shared by sequelize-cli and the app (development / test / production).
   - `logger.js`: the pino logger and its redaction paths.
-  - `auth.js`: cookie/header names, session TTL and touch interval, bcrypt cost, rate limits.
+  - `auth.js`: cookie/header names, session TTL and touch interval, bcrypt cost, rate limits (from env).
+  - Env vars added in Phase 11: `TRUST_PROXY` (0-10, default 0), `API_RATE_LIMIT_MAX` (default 300), `AUTH_RATE_LIMIT_MAX` (default 10). See `.env.example`.
 - **utils/**: `AppError.js` (typed errors), `clock.js` (the injectable `now()`), `tokens.js` (random tokens, `hashToken`, constant-time `safeEqual`), `password.js` (`hashPassword` / `verifyPassword`), `cookies.js` (set/clear the auth cookies with the right flags).
-- `app.js` exports `createApp({ db, logger, now, rateLimits })` and never listens, so tests inject fakes. Middleware reads the clock from `req.app.locals.now`. Rate limiters and the API router (`createApiRouter`) are built per app, so tests don't share limiter counters. `server.js` listens and handles graceful shutdown: on SIGTERM/SIGINT it closes the HTTP server, then the DB pool, and force-exits after 10 s. `unhandledRejection` and `uncaughtException` log at fatal level and exit 1.
+- `app.js` exports `createApp({ db, logger, now, rateLimits, trustProxy })` and never listens, so tests inject fakes. Middleware reads the clock from `req.app.locals.now`. Rate limiters and the API router (`createApiRouter`) are built per app, so tests don't share limiter counters. `server.js` listens and handles graceful shutdown: on SIGTERM/SIGINT it closes the HTTP server, then the DB pool, and force-exits after 10 s. `unhandledRejection` and `uncaughtException` log at fatal level and exit 1.
 
 **Async errors:** we rely on **Express 5 native async error handling**. A rejected promise or a throw in an `async` handler is forwarded to the error handler automatically. Do not add an `asyncHandler` wrapper.
 
@@ -272,28 +274,33 @@ src/
                     FormField, Card, Badge, Skeleton, EmptyState, ErrorState, Spinner, Modal,
                     ConfirmDialog, Toast (useToast), Tabs, DropdownMenu, SegmentedControl, StatCard + StatGrid
                     (import from components/ui)
-  components/layout AppShell (sidebar / bottom nav / top bar / skip link), AuthLayout, PageHeader, UserMenu
+  components/layout AppShell (sidebar / bottom nav / top bar / skip link), ConnectionStatus (offline banner), AuthLayout,
+                    PageHeader, UserMenu
   features/<name>/  feature code: api.js (calls), components, hooks (auth, today, notifications, habits, analytics, settings)
                     habits/: api.js (habits, completions, reminders), HabitFormModal + HabitFormProvider (useHabitForm),
                     formSchema.js, useHabitActions, DeleteHabitDialog, schedule.js (summaries), constants (icons, colours, templates)
                     habits/detail/: MonthCalendar (optimistic day toggles), NotesCard, RemindersEditor
                     today/: optimistic.js, useToggleCompletion, HabitRow, DateNavigator, ProgressSummary, WeeklyStrip, GetStarted
                     analytics/: api.js, ranges.js (URL presets), ChartFigure (chart + "Show data" table, formatRate),
-                    Charts (Recharts), Heatmap (ARIA grid), HistoryList (paginated /completions)
+                    Charts (Recharts), ChartsSection (lazy-loaded by AnalyticsPage, so Recharts is its own chunk),
+                    Heatmap (ARIA grid), HistoryList (paginated /completions)
                     notifications/: api.js, NotificationBell (badge, inbox panel, live announcements)
                     settings/: api.js, schemas.js, AccountForms (profile, timezone, preferences), PasswordForm,
                     PlanCard, DeleteAccount
   pages/            route-level pages composing features (Today, Habits, HabitDetail, Analytics, Settings, Auth, Error)
   services/         apiClient.js (the ONE axios instance)
-  hooks/            useFocusTrap, usePageTitle, useKeyboardShortcuts
-  lib/              cn, cookies, dates (todayIn(tz), addDays, ...), forms (applyServerErrors), queryClient (+ queryKeys,
+  hooks/            useFocusTrap, usePageTitle, useKeyboardShortcuts, usePrefersReducedMotion
+  lib/              cn, cookies, dates (todayIn(tz), addDays, ...), forms (applyServerErrors), mutationErrors
+                    (reportMutationError), queryClient (+ queryKeys,
                     HABIT_DATA_FAMILIES), redirect (safeReturnTo), theme, timezones
   styles/index.css  Tailwind import + design tokens
   test/             setup.js (+ ResizeObserver stub for Recharts), server.js (MSW fake API + `backend` state: session,
                     edited user, notifications; `makeNotification`), fakeHabits.js (stateful fake habits, completions,
                     notes, reminders, /today, history, analytics; `db`, `key`, `makeHabit`, `fakeToday`),
                     renderApp.jsx (`renderApp`, `currentUrl`, `statValue`)
-e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrate + seed plans on habitflow_test)
+public/             favicon.svg, manifest.webmanifest, icons/ (PWA basics, ADR-055; regenerate: node scripts/generate-icons.js)
+e2e/                Playwright specs: daily-loop, progress-review, user-stories (PRD §5), accessibility (axe light/dark,
+                    keyboard, reduced motion); helpers.js (API setup through page.request, UTC users); global-setup.js
 ```
 
 **Rules**
@@ -306,7 +313,9 @@ e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrat
 - **Accessibility (required):** use the `components/ui` primitives (they handle keyboard, focus and ARIA); every icon-only button has a `label`; every page renders a `PageHeader` (one `<h1>` and the document title); never convey state by colour alone; interactive custom widgets follow the WAI-ARIA Authoring Practices (see Modal, DropdownMenu, Tabs).
 - **Daily loop (ADR-047):** completions are optimistic through `useToggleCompletion(habit, date)`, which is keyed per habit/date and rolls back with the inverse toggle. "Today" in the UI is always `todayIn(user.timezone)`; the viewed day is `?date=`; future days are read-only. After any habit or completion change, invalidate `HABIT_DATA_FAMILIES`. Open the habit form with `useHabitForm()` (one provider in AppShell). Toggles use `aria-pressed` with a constant label and `aria-disabled` while unavailable.
 - **Progress views (ADR-049, ADR-050):** the habit calendar reuses the Today toggle rules and mutation key. Analytics filters live in the URL; a `null` rate shows "—" and "No scheduled habits in this period", never 0%. Every chart is a `ChartFigure` with a data table. A timezone change invalidates every non-auth query. Lazy pages need a `beforeAll(() => import(...))` in their tests so the first test doesn't time out.
-- **E2E:** `npm run test:e2e` (Postgres must be running). It starts its own API on :3100 (test DB) and Vite on :5174, runs on desktop and at 375 px, and writes screenshots to `test-results/screens/`. Add a spec for every new end-to-end user journey.
+- **Failures and connectivity (ADR-052):** saves fail fast offline (`networkMode: 'always'`); report mutation errors with `reportMutationError(toast, title, error, retry)` (no toast for a lost session, Retry for network errors). Disable or set `loading` on every submit button while its request runs.
+- **Colours on fills and names (ADR-054):** text or icons on a `bg-status-completed` or `bg-danger` fill use `text-on-completed` / `text-on-danger`, never `text-white` (dark-mode contrast). Form fields show focus with `focus-within:` (date/time picker buttons). The visible text must be part of the accessible name (WCAG 2.5.3): an `aria-label` starts with the visible text.
+- **E2E:** `npm run test:e2e` (Postgres must be running). It starts its own API on :3100 (test DB, raised general rate limit, reminders off) and Vite on :5174, runs on desktop, Pixel 5 and 375 px, and writes screenshots to `test-results/screens/`. Add a spec for every new end-to-end user journey, and add every new page or dialog to `e2e/accessibility.spec.js` (0 serious/critical axe violations, light and dark).
 - **Tests:** Vitest + RTL + MSW. Query by role or label (`getByRole('button', { name })`), which doubles as an accessibility check. Render the real app with `renderApp(path)`; set `backend.loggedIn = true` for an authenticated user; override one endpoint with `server.use(http.get(...))`. Unhandled requests fail the test.
 
 ---
@@ -376,6 +385,8 @@ e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrat
 | Dev server (auto-restart) | `npm run dev` → http://localhost:3000/api/v1/health (also starts the reminder scheduler and housekeeping; set `REMINDERS_ENABLED=false` in `.env` to silence reminders) |
 | Production start | `npm start` |
 | Tests (migrates test DB first) | `npm test` · watch: `npm run test:watch` · one file: `npm test -- tests/unit/env.test.js` |
+| Tests + coverage thresholds | `npm run test:coverage` (services/domain ≥ 85%, streaks.js and analytics.js 100%) |
+| Performance dataset / benchmark (dev DB) | `npm run perf:seed`, then `npm run perf:bench` (EXPLAIN + p95 per endpoint, target < 200 ms) |
 | Lint | `npm run lint` |
 | Format / check formatting | `npm run format` / `npm run format:check` |
 | Migrate dev DB / undo last / undo all | `npm run db:migrate` / `npm run db:migrate:undo` / `npm run db:migrate:undo:all` |
@@ -388,7 +399,8 @@ e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrat
 | Tests / watch | `npm test` · `npm run test:watch` |
 | E2E (Playwright) | `npm run test:e2e` (first time: `npx playwright install chromium`; needs Postgres) |
 | Lint / format | `npm run lint` · `npm run format` / `npm run format:check` |
-| Production build / preview | `npm run build` (→ `dist/`) · `npm run preview` |
+| Production build / preview | `npm run build` (→ `dist/`) · `npm run preview` (:4173, proxies `/api` like the dev server) |
+| Regenerate PWA icons | `node scripts/generate-icons.js` |
 | E2E tests (Playwright) | see Frontend above (`npm run test:e2e`) |
 
 ---
@@ -418,3 +430,4 @@ e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrat
 | 8 | Frontend foundation: Vite + React (JavaScript), Tailwind 4 design tokens (light/dark, never-red "missed"), accessible UI kit (Button, IconButton, form controls + FormField, Card, Badge, Skeleton, Empty/ErrorState, Spinner, Modal with focus trap, ConfirmDialog, Toasts, Tabs, DropdownMenu), apiClient (CSRF, workspace header, ApiError, 401 handling), AuthProvider/useAuth on `/auth/me`, login and signup (strength hint, detected timezone, server errors inline), Protected/PublicOnly routes with safe `returnTo`, responsive AppShell (sidebar, bottom nav, skip link, notification bell with unread count, user menu), Today page (loads `/today`, empty state), placeholder pages, 404 and error boundaries. 27 frontend tests (Vitest + RTL + MSW). Verified end to end through the Vite proxy against the real API (signup → empty Today → refresh → logout). ADR-045, ADR-046. Follow-up: lazy-load route pages (the bundle is a single 625 kB / 199 kB gzip chunk). |
 | 9 | Core daily experience. Today page: `?date=` navigation (buttons, date picker, ←/→, `n`), progress ring with a quiet 100% celebration, To do / Done / Not scheduled groups, optimistic toggles (aria-pressed; per-habit pending state and focus kept across group moves; inverse rollback with a toast), weekly strip, read-only future days, first-run templates. Habit form (modal / full screen on phones): details, category suggestions, colour and icon pickers, frequency segmented control with weekday chips or a times-per-week stepper, start date, reminders; Zod mirrors the API, server errors inline, friendly plan-limit message. Habits page: Active/Archived tabs, search, category filter, Edit/Archive/Restore/Delete (archive offered first), Move up/down reordering. 63 Vitest tests + Playwright E2E of the full loop on desktop and 375 px (found and fixed: a bottom toast covering the form's submit button on phones). ADR-047, ADR-048. |
 | 10 | Progress and account. Habit detail page: header with Edit/Archive/Restore, stat cards (streaks, 30-day rate, completions), month calendar with optimistic toggles (read-only when archived), notes for today, reminders editor. Analytics page: URL filters (7/30/90 days, this year, custom ≤ 366 days, habit), stat cards, daily/weekly/by-habit/by-category Recharts charts with data tables, null-rate empty state, 365-day keyboard heatmap, paginated history. Notification bell: 60 s + focus polling, inbox panel (mark read, mark all read, habit links), polite live announcements. Settings: profile, searchable timezone (invalidates all queries), notification preferences, password change, plan usage, delete account (password + DELETE). Lazy-loaded routes (Recharts only in the Analytics chunk). 88 Vitest tests + a second Playwright journey on desktop and 375 px. ADR-049, ADR-050. Follow-up: the E2E can't show a real reminder (the scheduler is off under NODE_ENV=test). |
+| 11 | Hardening. E2E for every PRD §5 user story on desktop, Pixel 5 and 375 px; axe on every page and dialog in light and dark (fixed: dark-mode contrast on green/red fills, upcoming-day contrast, label-in-name on the account menu and weekly strip, invisible focus on date/time picker buttons, a focusable layer inside aria-hidden charts, unreachable data-table scroll boxes, missing h1 on full-page states, chart animation under reduced motion); keyboard and reduced-motion checks. Security: uniform requireAuth → csrfProtection chain enforced by a router-walking test, log-secret capture test, production-mode probe (cookies, headers, CORS, 413, no stack/SQL), IDOR review (no gaps; membership check added to reminder dispatch), `TRUST_PROXY` and configurable rate limits, npm audit clean (body-parser upgrade, uuid override), friendly constraint messages. Robustness: offline banner, fail-fast saves with Retry, session-ended message, double-submit guards. Performance: integer date maths and plain completion rows took /today p95 from 934 to 103 ms on 350k completions (indexes were already used); Recharts in its own lazy chunk; Lighthouse mobile 94-100 performance, 100 accessibility. PWA manifest and icons. Coverage thresholds enforced. 557 backend, 92 frontend, 52 E2E tests. docs/QA_REPORT.md. ADR-051 to ADR-055. |

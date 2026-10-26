@@ -8,7 +8,8 @@
  *   Web  http://localhost:5174  Vite dev server proxying /api to the API above
  * e2e/global-setup.js migrates the test database and seeds the plans first.
  *
- * Two projects run every test: a desktop browser and a 375 px-wide phone.
+ * Three projects run every test: a desktop browser, a Pixel 5 (393 px, touch) and a 375 px phone
+ * (the narrowest common width, where layout bugs show first).
  */
 import { defineConfig, devices } from '@playwright/test';
 
@@ -33,6 +34,7 @@ export default defineConfig({
       name: 'desktop',
       use: { ...devices['Desktop Chrome'], viewport: { width: 1280, height: 800 } },
     },
+    { name: 'pixel-5', use: { ...devices['Pixel 5'] } },
     {
       name: 'mobile-375',
       use: {
@@ -49,7 +51,15 @@ export default defineConfig({
       command: 'node src/server.js',
       cwd: '../backend',
       url: `http://localhost:${API_PORT}/api/v1/health`,
-      env: { NODE_ENV: 'test', PORT: String(API_PORT), LOG_LEVEL: 'warn' },
+      // A whole run comes from one IP, so the general /api limit is raised (the login/signup
+      // limiter keeps its production value; specs use a new email per account).
+      env: {
+        NODE_ENV: 'test',
+        PORT: String(API_PORT),
+        LOG_LEVEL: 'warn',
+        API_RATE_LIMIT_MAX: '100000',
+        REMINDERS_ENABLED: 'false',
+      },
       reuseExistingServer: false, // fresh rate-limit counters every run
       timeout: 60_000,
     },

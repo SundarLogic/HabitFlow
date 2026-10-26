@@ -5,8 +5,9 @@
  * Request flow: userRoutes / authRoutes -> validators -> userController / authController
  * -> THIS FILE -> models. The caller is always the authenticated user (req.user).
  */
+import { ForeignKeyConstraintError } from 'sequelize';
 import { sequelize, User, Workspace } from '../models/index.js';
-import { ValidationError } from '../utils/AppError.js';
+import { ConflictError, ValidationError } from '../utils/AppError.js';
 import { hashPassword, verifyPassword } from '../utils/password.js';
 import { logoutAll } from './authService.js';
 import { getWorkspacePlan, listWorkspaces } from './workspaceService.js';
@@ -87,16 +88,25 @@ export async function changePassword({ userId, sessionId, currentPassword, newPa
  *      schedule days, completions and reminders;
  *   2. delete the user -> cascades to sessions, memberships, reminders and notifications.
  * If the user still owns a team workspace or has history in someone else's workspace, the
- * RESTRICT foreign keys stop step 2 and the error handler answers 409 RESOURCE_IN_USE.
+ * RESTRICT foreign keys stop step 2: the transaction rolls back and we answer 409
+ * RESOURCE_IN_USE with an explanation the user can act on.
  * @param {{ userId: string, password: string }} params
  */
 export async function deleteAccount({ userId, password }) {
   await assertPassword(userId, password);
-  await sequelize.transaction(async (transaction) => {
-    await Workspace.destroy({
-      where: { ownerUserId: userId, workspaceType: 'personal' },
-      transaction,
+  try {
+    await sequelize.transaction(async (transaction) => {
+      await Workspace.destroy({
+        where: { ownerUserId: userId, workspaceType: 'personal' },
+        transaction,
+      });
+      await User.destroy({ where: { id: userId }, transaction });
     });
-    await User.destroy({ where: { id: userId }, transaction });
-  });
+  } catch (error) {
+    if (!(error instanceof ForeignKeyConstraintError)) throw error;
+    throw new ConflictError(
+      'Your account still owns a team workspace or has history in one. Leave or delete those workspaces first.',
+      { code: 'RESOURCE_IN_USE' },
+    );
+  }
 }

@@ -17,8 +17,11 @@ import { cn } from '../../lib/cn.js';
 
 const CONTROL =
   'block w-full rounded-lg border border-border bg-surface-raised px-3 text-sm text-fg ' +
-  'placeholder:text-fg-muted/70 focus-visible:outline-2 focus-visible:outline-offset-0 ' +
-  'focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60 ' +
+  // :focus-within (not :focus-visible) for fields: text fields always show where typing goes,
+  // and when Tab reaches the calendar/clock button INSIDE a date or time input, Chromium no
+  // longer matches :focus on the input, only :focus-within (found by the Phase 11 keyboard test).
+  'placeholder:text-fg-muted/70 focus-within:outline-2 focus-within:outline-offset-0 ' +
+  'focus-within:outline-ring disabled:cursor-not-allowed disabled:opacity-60 ' +
   'aria-[invalid=true]:border-danger';
 
 /** A visible label. `required` adds a marker (the control itself carries aria-required). */

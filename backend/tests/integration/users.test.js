@@ -181,6 +181,7 @@ describe('DELETE /users/me', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('RESOURCE_IN_USE');
+    expect(res.body.error.message).toMatch(/team workspace/);
     // The transaction rolled back: the personal workspace is still there too.
     expect(await Workspace.count()).toBe(2);
     expect(await User.count()).toBe(1);

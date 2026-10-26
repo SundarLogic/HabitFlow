@@ -12,7 +12,7 @@ import { computeStreak } from '../domain/streaks.js';
 /**
  * One user's completions for several habits between two dates (inclusive), in ONE query.
  * @param {{ habitIds: string[], userId: string, from: string, to: string }} params
- * @returns {Promise<Map<string, HabitCompletion[]>>} habitId -> completions in date order
+ * @returns {Promise<Map<string, object[]>>} habitId -> completions (plain objects) in date order
  *   (every requested habit has an entry, possibly empty)
  */
 export async function loadCompletions({ habitIds, userId, from, to }) {
@@ -20,12 +20,17 @@ export async function loadCompletions({ habitIds, userId, from, to }) {
   if (habitIds.length === 0) return byHabit;
 
   const rows = await HabitCompletion.findAll({
+    // Plain objects with only the public fields (what toPublicCompletion reads): a long history
+    // is ~15 000 rows, and building a model instance per row (and parsing two more timestamps)
+    // cost more than everything else in GET /today (Phase 11 profiling, ADR-051).
+    attributes: ['id', 'habitId', 'completedBy', 'completionDate', 'completedAt', 'note'],
     where: {
       habitId: habitIds,
       completedBy: userId,
       completionDate: { [Op.between]: [from, to] },
     },
     order: [['completionDate', 'ASC']],
+    raw: true,
   });
   for (const row of rows) byHabit.get(row.habitId).push(row);
   return byHabit;

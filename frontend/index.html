@@ -5,6 +5,14 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="HabitFlow: build habits that stick." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- PWA basics (Phase 11): installable with a name, icons and colours. No service worker or
+         offline sync yet (PRD: PWA improvements come later). Regenerate icons with
+         node scripts/generate-icons.js. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <!-- Browser UI colour matches the app background in each colour scheme. -->
+    <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0b1120" media="(prefers-color-scheme: dark)" />
     <title>HabitFlow</title>
     <script>
       // Apply the saved theme BEFORE the page paints, so dark-mode users never see a white flash.

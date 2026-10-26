@@ -64,6 +64,9 @@ async function findDueReminders(now) {
        FROM habit_reminders r
        JOIN users u ON u.id = r.user_id
        JOIN habits h ON h.id = r.habit_id
+       -- Only while the user is still a member of the habit's workspace: a removed member
+       -- must not keep receiving that workspace's habit names (defence in depth, Phase 11).
+       JOIN workspace_members m ON m.workspace_id = h.workspace_id AND m.user_id = r.user_id
       WHERE r.enabled AND h.status = 'active' AND (${conditions.join(' OR ')})`,
     { replacements, type: QueryTypes.SELECT },
   );

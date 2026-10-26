@@ -41,21 +41,24 @@ export function WeeklyStrip({ today, selected, onSelect }) {
         <ol className="mt-3 grid grid-cols-7 gap-1.5">
           {data.daily.map((day) => {
             const percent = day.rate === null ? null : Math.round(day.rate * 100);
-            const label = DateTime.fromISO(day.date).toLocaleString({
-              weekday: 'short',
+            // The name STARTS with exactly what is visible ("Tue 50%"), then adds the details:
+            // "Tue 50%: Oct 20, 1 of 2 done". WCAG 2.5.3 Label in Name: speech users can say
+            // "click Tue" (Phase 11, ADR-054).
+            const weekday = shortWeekday(day.date);
+            const monthDay = DateTime.fromISO(day.date).toLocaleString({
               day: 'numeric',
               month: 'short',
             });
-            const detail =
+            const name =
               percent === null
-                ? 'nothing due'
-                : `${day.completed} of ${day.scheduled} done, ${percent}%`;
+                ? `${weekday}: ${monthDay}, nothing due`
+                : `${weekday} ${percent}%: ${monthDay}, ${day.completed} of ${day.scheduled} done`;
             return (
               <li key={day.date}>
                 <button
                   type="button"
                   onClick={() => onSelect(day.date)}
-                  aria-label={`${label}: ${detail}`}
+                  aria-label={name}
                   aria-current={day.date === selected ? 'date' : undefined}
                   className={cn(
                     'flex w-full flex-col items-center gap-1 rounded-lg p-1 hover:bg-surface-muted',
@@ -71,12 +74,16 @@ export function WeeklyStrip({ today, selected, onSelect }) {
                       style={percent === null ? undefined : { height: `${Math.max(percent, 6)}%` }}
                     />
                   </span>
-                  <span aria-hidden="true" className="text-xs text-fg-muted">
-                    {shortWeekday(day.date)}
-                  </span>
-                  <span aria-hidden="true" className="text-xs font-medium text-fg">
-                    {percent === null ? '–' : `${percent}%`}
-                  </span>
+                  <span className="text-xs text-fg-muted">{weekday}</span>
+                  {/* A real space between the two texts, so the visible text reads "Tue 50%" (as in
+                      the name) and not "Tue50%"; flex layout ignores it. */}{' '}
+                  {percent === null ? (
+                    <span aria-hidden="true" className="text-xs font-medium text-fg">
+                      –
+                    </span>
+                  ) : (
+                    <span className="text-xs font-medium text-fg">{percent}%</span>
+                  )}
                 </button>
               </li>
             );

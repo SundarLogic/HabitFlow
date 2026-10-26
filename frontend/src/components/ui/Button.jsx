@@ -18,7 +18,7 @@ const VARIANTS = {
   secondary:
     'border border-border bg-surface-raised text-fg hover:bg-surface-muted disabled:opacity-60',
   ghost: 'text-fg hover:bg-surface-muted disabled:opacity-60',
-  danger: 'bg-danger text-white hover:opacity-90 disabled:opacity-60',
+  danger: 'bg-danger text-on-danger hover:opacity-90 disabled:opacity-60',
 };
 
 const SIZES = {

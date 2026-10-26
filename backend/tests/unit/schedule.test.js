@@ -100,6 +100,11 @@ describe('isScheduledOn', () => {
     });
   });
 
+  it('treats missing schedule days of a weekdays habit as "never scheduled" (no crash)', () => {
+    expect(isScheduledOn(habit('weekdays'), undefined, '2026-10-26')).toBe(false);
+    expect(isScheduledOn(habit('weekdays'), null, '2026-10-26')).toBe(false);
+  });
+
   it('throws on malformed dates and unknown frequency types', () => {
     expect(() => isScheduledOn(habit('daily'), [], '2026-13-01')).toThrow(RangeError);
     expect(() => isScheduledOn(habit('daily'), [], '26-10-01')).toThrow(RangeError);

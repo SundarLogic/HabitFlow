@@ -9,7 +9,13 @@
  *   2024-02-29 Thu (leap day)        2028-02-29 Tue (leap day)
  */
 import { addDays, daysBetween, eachDay, todayIn, weekBounds } from '../../src/domain/dates.js';
-import { computeStreak, dayStatus, weekProgress, weekTarget } from '../../src/domain/streaks.js';
+import {
+  computeStreak,
+  currentRunStart,
+  dayStatus,
+  weekProgress,
+  weekTarget,
+} from '../../src/domain/streaks.js';
 
 const daily = (startDate = '2026-01-01') => ({ frequencyType: 'daily', startDate });
 const weekdaysHabit = (startDate = '2026-01-01') => ({ frequencyType: 'weekdays', startDate });
@@ -454,5 +460,24 @@ describe('dates.js week helpers', () => {
     expect(addDays('2026-10-25', -25)).toBe('2026-09-30');
     expect(daysBetween('2026-10-25', '2026-09-30')).toBe(-25);
     expect(() => addDays('2026-02-30', 1)).toThrow(RangeError);
+  });
+});
+
+describe('currentRunStart (identifies a run, for milestone de-duplication)', () => {
+  const runStart = (habit, completionDates, today, scheduleDays = []) =>
+    currentRunStart({ habit, scheduleDays, completionDates, today });
+
+  it('day habits: the first day of the current run, or null without one', () => {
+    expect(runStart(daily(), ['2026-10-20', '2026-10-23', '2026-10-24'], '2026-10-25')).toBe(
+      '2026-10-23',
+    );
+    expect(runStart(daily(), ['2026-10-20'], '2026-10-25')).toBeNull();
+  });
+
+  it('weekly habits: the Monday of the current run of met weeks, or null without one', () => {
+    // Target 2: weeks of Oct 5 and Oct 12 met, today Wed Oct 14 (current week already met).
+    const dates = ['2026-10-05', '2026-10-07', '2026-10-12', '2026-10-13'];
+    expect(runStart(weekly(2), dates, '2026-10-14')).toBe('2026-10-05');
+    expect(runStart(weekly(2), ['2026-10-05'], '2026-10-21')).toBeNull();
   });
 });

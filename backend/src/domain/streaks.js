@@ -139,14 +139,14 @@ function previousScheduledDay(habit, scheduleDays, date) {
   return null;
 }
 
-/** The first scheduled day strictly after `date`, looking at most one week ahead, or null. */
+/**
+ * The first scheduled day strictly after `date`. Callers only pass a SCHEDULED date (a counted
+ * completion), so the same weekday comes round again within 7 days and the loop always ends.
+ */
 function nextScheduledDay(habit, scheduleDays, date) {
-  let day = date;
-  for (let step = 0; step < 7; step += 1) {
-    day = addDays(day, 1);
-    if (isScheduledOn(habit, scheduleDays, day)) return day;
-  }
-  return null;
+  let day = addDays(date, 1);
+  while (!isScheduledOn(habit, scheduleDays, day)) day = addDays(day, 1);
+  return day;
 }
 
 /** Streaks counted in scheduled DAYS (daily and weekdays habits). */

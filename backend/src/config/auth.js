@@ -26,7 +26,13 @@ export const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
 /** bcrypt work factor. Each +1 doubles hashing time; 12 is ~250 ms on a modern CPU. */
 export const BCRYPT_COST = 12;
 
-/** Login/signup: 10 attempts per 15 minutes per IP + email. */
-export const AUTH_RATE_LIMIT = Object.freeze({ windowMs: 15 * 60 * 1000, limit: 10 });
-/** Everything under /api: 300 requests per 15 minutes per IP. */
-export const API_RATE_LIMIT = Object.freeze({ windowMs: 15 * 60 * 1000, limit: 300 });
+/** Login/signup: 10 attempts per 15 minutes per IP + email (AUTH_RATE_LIMIT_MAX). */
+export const AUTH_RATE_LIMIT = Object.freeze({
+  windowMs: 15 * 60 * 1000,
+  limit: env.AUTH_RATE_LIMIT_MAX,
+});
+/** Everything under /api: 300 requests per 15 minutes per IP (API_RATE_LIMIT_MAX). */
+export const API_RATE_LIMIT = Object.freeze({
+  windowMs: 15 * 60 * 1000,
+  limit: env.API_RATE_LIMIT_MAX,
+});

@@ -61,6 +61,9 @@
 
   --color-status-completed: var(--hf-completed);
   --color-status-completed-soft: var(--hf-completed-soft);
+  /* Text/icons drawn ON a completed fill (e.g. a ticked day): white in light mode, deep green in
+     dark mode, where the fill is a light emerald (Phase 11 contrast fix, >= 4.5:1 both ways). */
+  --color-on-completed: var(--hf-on-completed);
   --color-status-pending: var(--hf-pending);
   --color-status-pending-soft: var(--hf-pending-soft);
   --color-status-missed: var(--hf-missed);
@@ -70,6 +73,8 @@
 
   --color-danger: var(--hf-danger);
   --color-danger-soft: var(--hf-danger-soft);
+  /* Text on a danger fill (the "Delete" buttons): white on rose-700, dark rose on light rose. */
+  --color-on-danger: var(--hf-on-danger);
 }
 
 :root {
@@ -83,6 +88,7 @@
 
   --hf-completed: #047857; /* emerald-700: AA contrast on white for text and icons */
   --hf-completed-soft: #d1fae5;
+  --hf-on-completed: #ffffff;
   --hf-pending: #475569;
   --hf-pending-soft: #f1f5f9;
   --hf-missed: #78716c; /* stone-500 */
@@ -92,6 +98,7 @@
 
   --hf-danger: #be123c; /* rose-700 */
   --hf-danger-soft: #ffe4e6;
+  --hf-on-danger: #ffffff;
   color-scheme: light;
 }
 
@@ -106,6 +113,7 @@
 
   --hf-completed: #34d399;
   --hf-completed-soft: #064e3b;
+  --hf-on-completed: #022c22;
   --hf-pending: #cbd5e1;
   --hf-pending-soft: #1e293b;
   --hf-missed: #a8a29e;
@@ -115,6 +123,7 @@
 
   --hf-danger: #fb7185;
   --hf-danger-soft: #4c0519;
+  --hf-on-danger: #4c0519;
   color-scheme: dark;
 }
 

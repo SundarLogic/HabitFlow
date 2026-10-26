@@ -21,6 +21,13 @@ export default defineConfig({
       '/api': { target: backendUrl, changeOrigin: false },
     },
   },
+  // `npm run preview` serves the production build (dist/) the same way, e.g. for Lighthouse.
+  preview: {
+    port: 4173,
+    proxy: {
+      '/api': { target: backendUrl, changeOrigin: false },
+    },
+  },
   test: {
     environment: 'jsdom',
     // Unit/integration tests only; Playwright's e2e/*.spec.js files run with `npm run test:e2e`.

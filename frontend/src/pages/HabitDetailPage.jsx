@@ -42,6 +42,7 @@ import { HabitIcon } from '../features/habits/HabitIcon.jsx';
 import { useHabitForm } from '../features/habits/HabitFormProvider.jsx';
 import { scheduleSummary } from '../features/habits/schedule.js';
 import { useHabitActions } from '../features/habits/useHabitActions.js';
+import { usePageTitle } from '../hooks/usePageTitle.js';
 import { addDays, todayIn } from '../lib/dates.js';
 import { queryKeys } from '../lib/queryClient.js';
 
@@ -71,6 +72,8 @@ export function HabitDetailPage() {
     queryFn: () => getHabit(id),
   });
   const habit = detailQuery.data?.habit;
+  // The tab title also covers the loading and "not found" states, which have no PageHeader.
+  usePageTitle(detailQuery.isError ? 'Habit not found' : (habit?.name ?? 'Habit'));
 
   // The API caps history ranges at 366 days, so "completions" covers at most the last year.
   const yearAgo = addDays(today, -365);
@@ -99,6 +102,7 @@ export function HabitDetailPage() {
   if (detailQuery.isError) {
     return detailQuery.error.status === 404 ? (
       <EmptyState
+        headingLevel={1}
         title="Habit not found"
         description="It may have been deleted, or it belongs to another workspace."
         action={
@@ -142,7 +146,11 @@ export function HabitDetailPage() {
             }
             actions={
               archived ? (
-                <Button variant="secondary" onClick={() => unarchive.mutate(habit)}>
+                <Button
+                  variant="secondary"
+                  loading={unarchive.isPending}
+                  onClick={() => unarchive.mutate(habit)}
+                >
                   <ArchiveRestore aria-hidden="true" className="h-4 w-4" /> Restore
                 </Button>
               ) : (
@@ -150,7 +158,11 @@ export function HabitDetailPage() {
                   <Button variant="secondary" onClick={() => openEdit(habit)}>
                     <Pencil aria-hidden="true" className="h-4 w-4" /> Edit
                   </Button>
-                  <Button variant="secondary" onClick={() => archive.mutate(habit)}>
+                  <Button
+                    variant="secondary"
+                    loading={archive.isPending}
+                    onClick={() => archive.mutate(habit)}
+                  >
                     <Archive aria-hidden="true" className="h-4 w-4" /> Archive
                   </Button>
                 </>

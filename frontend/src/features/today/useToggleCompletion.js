@@ -19,6 +19,7 @@
  */
 import { useIsMutating, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useToast } from '../../components/ui/index.js';
+import { reportMutationError } from '../../lib/mutationErrors.js';
 import { HABIT_DATA_FAMILIES, queryKeys } from '../../lib/queryClient.js';
 import { markComplete, unmarkComplete } from '../habits/api.js';
 import { applyToggle } from './optimistic.js';
@@ -46,9 +47,12 @@ export function useToggleCompletion(habit, date) {
       queryClient.setQueryData(key, (data) =>
         applyToggle(data, { habitId: habit.id, done: !done }),
       );
-      toast.error(done ? `Couldn't mark "${habit.name}" done` : `Couldn't undo "${habit.name}"`, {
-        description: error.message,
-      });
+      reportMutationError(
+        toast,
+        done ? `Couldn't mark "${habit.name}" done` : `Couldn't undo "${habit.name}"`,
+        error,
+        () => mutation.mutate(done),
+      );
     },
     onSettled: () =>
       Promise.all(

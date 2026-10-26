@@ -86,6 +86,7 @@ Backend (Jest + Supertest, against `habitflow_test`; Postgres must be running):
 ```bash
 cd backend
 npm test            # migrates the test DB, then runs unit + integration tests
+npm run test:coverage   # same, and fails below the coverage targets (services/domain 85%, streaks/analytics 100%)
 npm run lint
 ```
 
@@ -97,7 +98,7 @@ npm test
 npm run lint
 ```
 
-End-to-end (Playwright, real browser + real API, desktop and 375 px phone; Postgres must be running):
+End-to-end (Playwright, real browser + real API, on desktop, Pixel 5 and a 375 px phone; includes the PRD user stories and axe accessibility checks in light and dark mode; Postgres must be running):
 
 ```bash
 cd frontend
@@ -105,4 +106,13 @@ npx playwright install chromium   # first time only
 npm run test:e2e                  # starts its own API (:3100, test DB) and web server (:5174)
 ```
 
+Performance (development database; adds perf-*@habitflow.local users):
+
+```bash
+cd backend
+npm run perf:seed    # 20 users x 50 habits x 2 years of history
+npm run perf:bench   # EXPLAIN plans + p50/p95 per endpoint; fails if a p95 is >= 200 ms
+```
+
+What was checked before release, and the known limitations: [docs/QA_REPORT.md](docs/QA_REPORT.md).
 See [CLAUDE.md §7](CLAUDE.md) for the full command list.

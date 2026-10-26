@@ -19,6 +19,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { queryKeys } from '../../lib/queryClient.js';
 import { loginUrl } from '../../lib/redirect.js';
 import { setUnauthorizedHandler } from '../../services/apiClient.js';
+import { useToast } from '../../components/ui/index.js';
 import * as authApi from './api.js';
 
 const AuthContext = createContext(null);
@@ -29,6 +30,7 @@ const PUBLIC_PATHS = ['/login', '/signup'];
 export function AuthProvider({ children }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const toast = useToast();
   // The handler below runs outside React's render, so it reads the CURRENT route from a ref.
   const location = useLocation();
   const locationRef = useRef(location);
@@ -53,11 +55,15 @@ export function AuthProvider({ children }) {
       queryClient.setQueryData(queryKeys.me, null);
       const { pathname, search } = locationRef.current;
       if (!PUBLIC_PATHS.includes(pathname)) {
+        // Say why we left the page: the session expired, or was ended on another device.
+        toast.info('Your session has ended', {
+          description: 'Log in again to continue. You will come back to this page.',
+        });
         navigate(loginUrl(pathname + search), { replace: true });
       }
     });
     return () => setUnauthorizedHandler(null);
-  }, [queryClient, navigate]);
+  }, [queryClient, navigate, toast]);
 
   /** After login/signup: load the full /auth/me (workspaces, plan) into the cache. */
   const refreshMe = useCallback(async () => {

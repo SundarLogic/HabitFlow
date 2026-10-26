@@ -100,6 +100,14 @@ const envSchema = z
     // The every-minute reminder scheduler (server.js only; never runs under NODE_ENV=test).
     REMINDERS_ENABLED: booleanString.optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+    // Express "trust proxy": how many reverse proxies sit in front of the API (0 = none, the
+    // default). Behind a proxy, set it so req.ip (rate limits, logs) is the CLIENT's address and
+    // not the proxy's; otherwise every user shares one rate-limit bucket.
+    // Requests allowed per 15 minutes (ADR-033). The defaults are the production rules; the
+    // Playwright API server raises the general one, since a whole E2E run comes from one IP.
+    API_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(300),
+    AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
+    TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
   })
   // superRefine = rules that involve SEVERAL variables at once. ctx.addIssue() reports a problem.
   .superRefine((env, ctx) => {

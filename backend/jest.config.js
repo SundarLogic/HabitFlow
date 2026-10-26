@@ -23,4 +23,12 @@ export default {
   maxWorkers: 1,
   // For `npm test -- --coverage`: measure everything in src/ except the startup script.
   collectCoverageFrom: ['src/**/*.js', '!src/server.js'],
+  // Minimum coverage, enforced by `npm run test:coverage` (Phase 11): services and domain
+  // rules at least 85%, and every line and branch of the streak and analytics engines.
+  coverageThreshold: {
+    './src/services/': { statements: 85, branches: 85, functions: 85, lines: 85 },
+    './src/domain/': { statements: 85, branches: 85, functions: 85, lines: 85 },
+    './src/domain/streaks.js': { statements: 100, branches: 100, functions: 100, lines: 100 },
+    './src/domain/analytics.js': { statements: 100, branches: 100, functions: 100, lines: 100 },
+  },
 };

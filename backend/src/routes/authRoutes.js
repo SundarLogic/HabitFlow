@@ -30,7 +30,7 @@ export function createAuthRouter({ authRateLimit }) {
   router.post('/signup', authLimiter, validate({ body: signupBody }), authController.signup);
   router.post('/login', authLimiter, validate({ body: loginBody }), authController.login);
   router.post('/logout', requireAuth, csrfProtection, authController.logout);
-  router.get('/me', requireAuth, resolveWorkspace, authController.me);
+  router.get('/me', requireAuth, csrfProtection, resolveWorkspace, authController.me);
   router.get('/csrf', authController.csrf);
 
   return router;

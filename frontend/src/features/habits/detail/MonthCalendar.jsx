@@ -15,6 +15,7 @@ import { DateTime } from 'luxon';
 import { useState } from 'react';
 import { IconButton, Skeleton, useToast } from '../../../components/ui/index.js';
 import { cn } from '../../../lib/cn.js';
+import { reportMutationError } from '../../../lib/mutationErrors.js';
 import { HABIT_DATA_FAMILIES, queryKeys } from '../../../lib/queryClient.js';
 import { WEEKDAYS } from '../constants.js';
 import { getHabitHistory, markComplete, unmarkComplete } from '../api.js';
@@ -28,11 +29,11 @@ const STATUS_TEXT = {
   upcoming: 'upcoming',
 };
 const STATUS_STYLE = {
-  completed: 'bg-status-completed text-white',
+  completed: 'bg-status-completed text-on-completed',
   pending: 'border-2 border-border text-fg',
   missed: 'border-2 border-dashed border-status-missed text-status-missed',
   not_scheduled: 'text-status-unscheduled',
-  upcoming: 'text-fg-muted/60',
+  upcoming: 'text-fg-muted', // full strength: day numbers are text and need 4.5:1 contrast
 };
 
 /** One clickable day. Its own mutation, keyed like Today's so both screens share pending state. */
@@ -71,7 +72,7 @@ function DayButton({ habit, day, historyKey, today, label }) {
     },
     onError: (error, done) => {
       patch(!done);
-      toast.error(`Couldn't update ${label}`, { description: error.message });
+      reportMutationError(toast, `Couldn't update ${label}`, error, () => mutation.mutate(done));
     },
     onSettled: () =>
       Promise.all(

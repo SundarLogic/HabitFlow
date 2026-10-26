@@ -76,3 +76,21 @@ it('applies the general /api limit to every endpoint (tiny limit for speed)', as
   expect(third.status).toBe(429);
   expect(third.body).toEqual(RATE_LIMITED);
 });
+
+describe('behind a reverse proxy (TRUST_PROXY)', () => {
+  const tiny = { api: { windowMs: 60_000, limit: 1 } };
+  const from = (app, ip) => request(app).get('/api/v1/health').set('X-Forwarded-For', ip);
+
+  it('by default ignores X-Forwarded-For, so a client cannot dodge the limit by spoofing it', async () => {
+    const app = createApp({ rateLimits: tiny });
+    expect((await from(app, '203.0.113.1')).status).toBe(200);
+    expect((await from(app, '203.0.113.2')).status).toBe(429);
+  });
+
+  it('with trustProxy = 1, counts each client IP separately', async () => {
+    const app = createApp({ rateLimits: tiny, trustProxy: 1 });
+    expect((await from(app, '203.0.113.1')).status).toBe(200);
+    expect((await from(app, '203.0.113.2')).status).toBe(200);
+    expect((await from(app, '203.0.113.1')).status).toBe(429);
+  });
+});

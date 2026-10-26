@@ -35,14 +35,16 @@ export function UserMenu() {
           aria-label={`Account menu for ${user?.name ?? 'you'}`}
           className="inline-flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-surface-muted"
         >
+          {/* The initials are drawn by CSS (::before), so they are decoration, not text, and the
+              name "Account menu for <name>" contains everything visible on the button
+              (WCAG 2.5.3 Label in Name: speech users can say "click Ana Lima"). */}
           <span
             aria-hidden="true"
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-800 dark:bg-brand-900 dark:text-brand-100"
-          >
-            {initials(user?.name)}
-          </span>
+            data-initials={initials(user?.name)}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-800 before:content-[attr(data-initials)] dark:bg-brand-900 dark:text-brand-100"
+          />
           <span className="hidden max-w-32 truncate text-sm font-medium text-fg sm:inline">
-            {user?.name}
+            {user?.name ?? 'you'}
           </span>
           <ChevronDown aria-hidden="true" className="h-4 w-4 text-fg-muted" />
         </button>

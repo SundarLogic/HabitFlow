@@ -19,20 +19,32 @@ import { userRouter } from './userRoutes.js';
 import { workspaceRouter } from './workspaceRoutes.js';
 
 /**
+ * Path prefix -> router factory, in mount order. Exported so tests/integration/routeGuards.test.js
+ * can walk every real route and check its middleware chain.
+ * @param {{ authRateLimit: { windowMs: number, limit: number } }} options
+ * @returns {[string, import('express').Router][]}
+ */
+export function apiMounts({ authRateLimit }) {
+  return [
+    ['/health', healthRouter],
+    ['/auth', createAuthRouter({ authRateLimit })],
+    ['/users', userRouter],
+    ['/workspaces', workspaceRouter],
+    ['/habits', habitRouter],
+    ['/completions', completionRouter],
+    ['/today', todayRouter],
+    ['/analytics', analyticsRouter],
+    ['/reminders', reminderRouter],
+    ['/notifications', notificationRouter],
+  ];
+}
+
+/**
  * @param {{ authRateLimit: { windowMs: number, limit: number } }} options
  * @returns {import('express').Router}
  */
 export function createApiRouter({ authRateLimit }) {
   const router = Router();
-  router.use('/health', healthRouter);
-  router.use('/auth', createAuthRouter({ authRateLimit }));
-  router.use('/users', userRouter);
-  router.use('/workspaces', workspaceRouter);
-  router.use('/habits', habitRouter);
-  router.use('/completions', completionRouter);
-  router.use('/today', todayRouter);
-  router.use('/analytics', analyticsRouter);
-  router.use('/reminders', reminderRouter);
-  router.use('/notifications', notificationRouter);
+  for (const [path, featureRouter] of apiMounts({ authRateLimit })) router.use(path, featureRouter);
   return router;
 }

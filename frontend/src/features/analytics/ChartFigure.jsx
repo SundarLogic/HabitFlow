@@ -35,7 +35,14 @@ export function ChartFigure({ title, description, columns, rows, height = 240, c
       </div>
       <details className="mt-3 text-sm">
         <summary className="cursor-pointer text-fg-muted hover:text-fg">Show data</summary>
-        <div className="mt-2 max-h-64 overflow-auto">
+        {/* A scrollable box must be reachable by keyboard (tabIndex) and named, so keyboard
+            users can scroll long tables too (axe: scrollable-region-focusable). */}
+        <div
+          tabIndex={0}
+          role="region"
+          aria-label={`${title}: data`}
+          className="mt-2 max-h-64 overflow-auto rounded focus-visible:outline-2 focus-visible:outline-ring"
+        >
           <table className="w-full text-left">
             <caption className="sr-only">{title}</caption>
             <thead>

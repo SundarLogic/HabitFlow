@@ -28,6 +28,7 @@ export function NotFoundPage() {
     <CenteredPage>
       <EmptyState
         icon={Compass}
+        headingLevel={1}
         title="Page not found"
         description="The page you're looking for doesn't exist or has moved."
         action={
@@ -54,6 +55,7 @@ function CrashScreen() {
       <div role="alert">
         <EmptyState
           icon={RotateCcw}
+          headingLevel={1}
           title="Something went wrong"
           description="An unexpected error stopped this page. Reloading usually fixes it; your data is safe."
           action={<Button onClick={() => window.location.reload()}>Reload page</Button>}

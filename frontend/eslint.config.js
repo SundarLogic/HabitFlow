@@ -38,7 +38,7 @@ export default [
 
   // Config files and tests run in Node / Vitest.
   {
-    files: ['*.config.js', 'src/test/**', '**/*.test.{js,jsx}', 'e2e/**'],
+    files: ['*.config.js', 'src/test/**', '**/*.test.{js,jsx}', 'e2e/**', 'scripts/**'],
     languageOptions: { globals: { ...globals.node, ...globals.vitest } },
   },
 

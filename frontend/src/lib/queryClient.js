@@ -41,7 +41,10 @@ export function createQueryClient() {
           return failureCount < 1;
         },
       },
-      mutations: { retry: false },
+      // Saves fail fast when offline ("always" = don't pause until the connection returns):
+      // the optimistic change rolls back at once and the toast offers Retry, instead of a
+      // change that looks saved but would be lost on reload (Phase 11, ADR-052).
+      mutations: { retry: false, networkMode: 'always' },
     },
   });
 }

@@ -266,23 +266,33 @@ CSRF runs before validation so a forged request learns nothing from validation m
 ```
 src/
   main.jsx          providers: AppErrorBoundary > ThemeProvider > QueryClientProvider > ToastProvider > App
-  App.jsx           route table (exported as `routes` for tests) + RootLayout (AuthProvider)
+  App.jsx           route table (exported as `routes` for tests) + RootLayout (AuthProvider); habit detail,
+                    analytics and settings are lazy-loaded (React.lazy + Suspense)
   components/ui/    design system: Button, IconButton, Input, Textarea, Select, Checkbox, Label,
                     FormField, Card, Badge, Skeleton, EmptyState, ErrorState, Spinner, Modal,
-                    ConfirmDialog, Toast (useToast), Tabs, DropdownMenu (import from components/ui)
+                    ConfirmDialog, Toast (useToast), Tabs, DropdownMenu, SegmentedControl, StatCard + StatGrid
+                    (import from components/ui)
   components/layout AppShell (sidebar / bottom nav / top bar / skip link), AuthLayout, PageHeader, UserMenu
   features/<name>/  feature code: api.js (calls), components, hooks (auth, today, notifications, habits, analytics, settings)
                     habits/: api.js (habits, completions, reminders), HabitFormModal + HabitFormProvider (useHabitForm),
                     formSchema.js, useHabitActions, DeleteHabitDialog, schedule.js (summaries), constants (icons, colours, templates)
+                    habits/detail/: MonthCalendar (optimistic day toggles), NotesCard, RemindersEditor
                     today/: optimistic.js, useToggleCompletion, HabitRow, DateNavigator, ProgressSummary, WeeklyStrip, GetStarted
-  pages/            route-level pages composing features
+                    analytics/: api.js, ranges.js (URL presets), ChartFigure (chart + "Show data" table, formatRate),
+                    Charts (Recharts), Heatmap (ARIA grid), HistoryList (paginated /completions)
+                    notifications/: api.js, NotificationBell (badge, inbox panel, live announcements)
+                    settings/: api.js, schemas.js, AccountForms (profile, timezone, preferences), PasswordForm,
+                    PlanCard, DeleteAccount
+  pages/            route-level pages composing features (Today, Habits, HabitDetail, Analytics, Settings, Auth, Error)
   services/         apiClient.js (the ONE axios instance)
   hooks/            useFocusTrap, usePageTitle, useKeyboardShortcuts
   lib/              cn, cookies, dates (todayIn(tz), addDays, ...), forms (applyServerErrors), queryClient (+ queryKeys,
                     HABIT_DATA_FAMILIES), redirect (safeReturnTo), theme, timezones
   styles/index.css  Tailwind import + design tokens
-  test/             setup.js, server.js (MSW fake API + `backend` session state), fakeHabits.js (stateful fake habits,
-                    completions, /today; `db`, `makeHabit`, `fakeToday`), renderApp.jsx
+  test/             setup.js (+ ResizeObserver stub for Recharts), server.js (MSW fake API + `backend` state: session,
+                    edited user, notifications; `makeNotification`), fakeHabits.js (stateful fake habits, completions,
+                    notes, reminders, /today, history, analytics; `db`, `key`, `makeHabit`, `fakeToday`),
+                    renderApp.jsx (`renderApp`, `currentUrl`, `statValue`)
 e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrate + seed plans on habitflow_test)
 ```
 
@@ -295,6 +305,7 @@ e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrat
 - **Design tokens:** use the semantic classes (`bg-surface`, `text-fg`, `text-fg-muted`, `border-border`, `bg-status-completed-soft`, `text-status-missed`, `text-danger`...) instead of raw palette colours. Habit status palette: completed = green, pending = neutral, **missed = soft stone, never red**, not scheduled = faint grey. Red (`danger`) is only for destructive actions and form errors. Dark mode is the `dark` class on `<html>` (`useTheme()`).
 - **Accessibility (required):** use the `components/ui` primitives (they handle keyboard, focus and ARIA); every icon-only button has a `label`; every page renders a `PageHeader` (one `<h1>` and the document title); never convey state by colour alone; interactive custom widgets follow the WAI-ARIA Authoring Practices (see Modal, DropdownMenu, Tabs).
 - **Daily loop (ADR-047):** completions are optimistic through `useToggleCompletion(habit, date)`, which is keyed per habit/date and rolls back with the inverse toggle. "Today" in the UI is always `todayIn(user.timezone)`; the viewed day is `?date=`; future days are read-only. After any habit or completion change, invalidate `HABIT_DATA_FAMILIES`. Open the habit form with `useHabitForm()` (one provider in AppShell). Toggles use `aria-pressed` with a constant label and `aria-disabled` while unavailable.
+- **Progress views (ADR-049, ADR-050):** the habit calendar reuses the Today toggle rules and mutation key. Analytics filters live in the URL; a `null` rate shows "—" and "No scheduled habits in this period", never 0%. Every chart is a `ChartFigure` with a data table. A timezone change invalidates every non-auth query. Lazy pages need a `beforeAll(() => import(...))` in their tests so the first test doesn't time out.
 - **E2E:** `npm run test:e2e` (Postgres must be running). It starts its own API on :3100 (test DB) and Vite on :5174, runs on desktop and at 375 px, and writes screenshots to `test-results/screens/`. Add a spec for every new end-to-end user journey.
 - **Tests:** Vitest + RTL + MSW. Query by role or label (`getByRole('button', { name })`), which doubles as an accessibility check. Render the real app with `renderApp(path)`; set `backend.loggedIn = true` for an authenticated user; override one endpoint with `server.use(http.get(...))`. Unhandled requests fail the test.
 
@@ -406,3 +417,4 @@ e2e/                Playwright specs (desktop + 375 px), global-setup.js (migrat
 | 7 | Reminders and notifications: reminder CRUD (`/habits/:id/reminders`, `/reminders/:id`), delivery abstraction (`NotificationChannel`, `InAppChannel`, `dispatchNotification` with preferences and DB dedupe), reminder scheduler (Luxon per-timezone matching, 4 queries per tick, exactly-once) and daily housekeeping, both started only from `server.js` (`REMINDERS_ENABLED` env var), streak milestone notifications, notification inbox endpoints, `isDue` on `/today`. Removed `jobs/sessionCleanup.js` (now part of housekeeping). docs/API.md (every endpoint) and docs/openapi.yaml (34 operations, checked against the route files). ADR-042 to ADR-044. 492 tests passing. **Backend feature-complete for the first release.** |
 | 8 | Frontend foundation: Vite + React (JavaScript), Tailwind 4 design tokens (light/dark, never-red "missed"), accessible UI kit (Button, IconButton, form controls + FormField, Card, Badge, Skeleton, Empty/ErrorState, Spinner, Modal with focus trap, ConfirmDialog, Toasts, Tabs, DropdownMenu), apiClient (CSRF, workspace header, ApiError, 401 handling), AuthProvider/useAuth on `/auth/me`, login and signup (strength hint, detected timezone, server errors inline), Protected/PublicOnly routes with safe `returnTo`, responsive AppShell (sidebar, bottom nav, skip link, notification bell with unread count, user menu), Today page (loads `/today`, empty state), placeholder pages, 404 and error boundaries. 27 frontend tests (Vitest + RTL + MSW). Verified end to end through the Vite proxy against the real API (signup → empty Today → refresh → logout). ADR-045, ADR-046. Follow-up: lazy-load route pages (the bundle is a single 625 kB / 199 kB gzip chunk). |
 | 9 | Core daily experience. Today page: `?date=` navigation (buttons, date picker, ←/→, `n`), progress ring with a quiet 100% celebration, To do / Done / Not scheduled groups, optimistic toggles (aria-pressed; per-habit pending state and focus kept across group moves; inverse rollback with a toast), weekly strip, read-only future days, first-run templates. Habit form (modal / full screen on phones): details, category suggestions, colour and icon pickers, frequency segmented control with weekday chips or a times-per-week stepper, start date, reminders; Zod mirrors the API, server errors inline, friendly plan-limit message. Habits page: Active/Archived tabs, search, category filter, Edit/Archive/Restore/Delete (archive offered first), Move up/down reordering. 63 Vitest tests + Playwright E2E of the full loop on desktop and 375 px (found and fixed: a bottom toast covering the form's submit button on phones). ADR-047, ADR-048. |
+| 10 | Progress and account. Habit detail page: header with Edit/Archive/Restore, stat cards (streaks, 30-day rate, completions), month calendar with optimistic toggles (read-only when archived), notes for today, reminders editor. Analytics page: URL filters (7/30/90 days, this year, custom ≤ 366 days, habit), stat cards, daily/weekly/by-habit/by-category Recharts charts with data tables, null-rate empty state, 365-day keyboard heatmap, paginated history. Notification bell: 60 s + focus polling, inbox panel (mark read, mark all read, habit links), polite live announcements. Settings: profile, searchable timezone (invalidates all queries), notification preferences, password change, plan usage, delete account (password + DELETE). Lazy-loaded routes (Recharts only in the Analytics chunk). 88 Vitest tests + a second Playwright journey on desktop and 375 px. ADR-049, ADR-050. Follow-up: the E2E can't show a real reminder (the scheduler is off under NODE_ENV=test). |

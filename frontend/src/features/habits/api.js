@@ -109,3 +109,34 @@ export async function syncReminders(habitId, existing, wanted) {
     }
   }
 }
+
+// --- Habit detail ----------------------------------------------------------------------------
+
+/** GET /habits/:id -> { habit, streaks: { current, longest, unit, status, weekProgress? } } */
+export async function getHabit(id) {
+  const { data } = await api.get(`/habits/${id}`);
+  return data;
+}
+
+/** GET /habits/:id/history -> { habitId, range, data: [{ date, status, completed }] } */
+export async function getHabitHistory(id, { from, to }) {
+  const { data } = await api.get(`/habits/${id}/history`, { params: { from, to } });
+  return data;
+}
+
+/**
+ * GET /completions (the user's own, newest first). from/to are required, at most 366 days.
+ * @returns {Promise<{ data: object[], meta: { page: number, limit: number, total: number } }>}
+ */
+export async function listCompletions({ from, to, habitId, page = 1, limit = 20 }) {
+  const params = { from, to, page, limit };
+  if (habitId) params.habitId = habitId;
+  const { data } = await api.get('/completions', { params });
+  return data;
+}
+
+/** PUT with a note: marks the day done if needed and stores the note (idempotent). */
+export async function saveCompletionNote(habitId, date, note) {
+  const { data } = await api.put(`/habits/${habitId}/completions/${date}`, { note });
+  return data.completion;
+}

@@ -82,16 +82,33 @@ export function AuthProvider({ children }) {
     [refreshMe],
   );
 
+  /**
+   * Forgets everything cached for this session and leaves to `to` (after logout, or after the
+   * account was deleted).
+   */
+  const endSession = useCallback(
+    (to = '/login') => {
+      queryClient.clear();
+      queryClient.setQueryData(queryKeys.me, null);
+      navigate(to, { replace: true });
+    },
+    [queryClient, navigate],
+  );
+
   const logout = useCallback(async () => {
     try {
       await authApi.logout();
     } finally {
       // Even if the request failed (offline), forget everything locally and leave.
-      queryClient.clear();
-      queryClient.setQueryData(queryKeys.me, null);
-      navigate('/login', { replace: true });
+      endSession('/login');
     }
-  }, [queryClient, navigate]);
+  }, [endSession]);
+
+  /** Updates the cached user after a profile change (no refetch needed). */
+  const setUser = useCallback(
+    (user) => queryClient.setQueryData(queryKeys.me, (me) => (me ? { ...me, user } : me)),
+    [queryClient],
+  );
 
   const me = meQuery.data ?? null;
   let status = 'anonymous';
@@ -109,8 +126,10 @@ export function AuthProvider({ children }) {
       login,
       signup,
       logout,
+      endSession,
+      setUser,
     }),
-    [status, me, meQuery.error, login, signup, logout],
+    [status, me, meQuery.error, login, signup, logout, endSession, setUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -119,7 +138,8 @@ export function AuthProvider({ children }) {
 /**
  * @returns {{ status: 'loading'|'authenticated'|'anonymous', user: object|null,
  *   workspaces: object[], activeWorkspaceId: string|null, plan: object|null, error: Error|null,
- *   login: Function, signup: Function, logout: Function }}
+ *   login: Function, signup: Function, logout: Function, endSession: (to?: string) => void,
+ *   setUser: (user: object) => void }}
  */
 export function useAuth() {
   const context = useContext(AuthContext);

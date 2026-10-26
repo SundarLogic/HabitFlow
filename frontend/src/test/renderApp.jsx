@@ -8,7 +8,7 @@
  * Each call gets a fresh query cache, so tests never share server data.
  */
 import { QueryClientProvider } from '@tanstack/react-query';
-import { render } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { routes } from '../App.jsx';
@@ -37,4 +37,13 @@ export function renderApp(path = '/') {
 export function currentUrl(router) {
   const { pathname, search } = router.state.location;
   return pathname + search;
+}
+
+/**
+ * The value shown on a StatCard, found by its label: `await statValue('Completion rate')` -> '50%'.
+ * Waits for the card to appear.
+ */
+export async function statValue(label) {
+  const term = await screen.findByText(label, { selector: 'dt' });
+  return term.nextElementSibling.textContent;
 }

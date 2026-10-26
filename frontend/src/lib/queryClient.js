@@ -17,7 +17,11 @@ export const queryKeys = {
   categories: ['habits', 'categories'],
   habit: (id) => ['habit', id],
   reminders: (habitId) => ['habit', habitId, 'reminders'],
-  analyticsSummary: (from, to) => ['analytics', 'summary', from, to],
+  analyticsSummary: (from, to, habitId) => ['analytics', 'summary', from, to, habitId ?? 'all'],
+  heatmap: (from, to) => ['analytics', 'heatmap', from, to],
+  habitHistory: (id, from, to) => ['habit', id, 'history', from, to],
+  completions: (filters) => ['habit', 'completions', filters],
+  notifications: ['notifications', 'list'],
 };
 
 /** Families refreshed after anything that changes habits or completions. */

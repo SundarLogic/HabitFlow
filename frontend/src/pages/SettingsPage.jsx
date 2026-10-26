@@ -1,10 +1,19 @@
 /**
- * Settings (/settings). Phase 8: account summary and the theme choice. Editing the profile,
- * password and notification preferences arrives with the settings feature.
+ * Settings (/settings): profile, timezone, notifications, password, plan, appearance and the
+ * danger zone. Each section is a small component from features/settings that saves on its own.
  */
 import { PageHeader } from '../components/layout/PageHeader.jsx';
 import { Card, Tabs } from '../components/ui/index.js';
+import {
+  NotificationPrefs,
+  ProfileForm,
+  TimezoneForm,
+} from '../features/settings/AccountForms.jsx';
+import { DeleteAccount } from '../features/settings/DeleteAccount.jsx';
+import { PasswordForm } from '../features/settings/PasswordForm.jsx';
+import { PlanCard } from '../features/settings/PlanCard.jsx';
 import { useAuth } from '../features/auth/AuthProvider.jsx';
+import { cn } from '../lib/cn.js';
 import { useTheme } from '../lib/theme.jsx';
 
 const THEMES = [
@@ -13,31 +22,46 @@ const THEMES = [
   { value: 'dark', label: 'Dark' },
 ];
 
+/** A titled settings card, labelled by its heading for screen reader landmarks. */
+function Section({ id, title, className, children }) {
+  return (
+    <Card as="section" aria-labelledby={id} className={className}>
+      <h2
+        id={id}
+        className={cn('mb-4 text-base font-semibold', id === 'danger-title' && 'text-danger')}
+      >
+        {title}
+      </h2>
+      {children}
+    </Card>
+  );
+}
+
 export function SettingsPage() {
   const { user } = useAuth();
   const { theme, setTheme } = useTheme();
+  if (!user) return null;
 
   return (
     <>
       <PageHeader title="Settings" />
-      <div className="space-y-6">
-        <Card as="section" aria-labelledby="account-title">
-          <h2 id="account-title" className="text-base font-semibold">
-            Account
-          </h2>
-          <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-[10rem_1fr]">
-            <dt className="text-fg-muted">Name</dt>
-            <dd>{user?.name}</dd>
-            <dt className="text-fg-muted">Email</dt>
-            <dd>{user?.email}</dd>
-            <dt className="text-fg-muted">Timezone</dt>
-            <dd>{user?.timezone}</dd>
-          </dl>
-        </Card>
-        <Card as="section" aria-labelledby="appearance-title">
-          <h2 id="appearance-title" className="mb-4 text-base font-semibold">
-            Appearance
-          </h2>
+      <div className="grid gap-6 lg:grid-cols-2">
+        <Section id="profile-title" title="Profile">
+          <ProfileForm />
+        </Section>
+        <Section id="timezone-title" title="Timezone">
+          <TimezoneForm />
+        </Section>
+        <Section id="notifications-title" title="Notifications">
+          <NotificationPrefs />
+        </Section>
+        <Section id="plan-title" title="Plan">
+          <PlanCard />
+        </Section>
+        <Section id="password-title" title="Password">
+          <PasswordForm />
+        </Section>
+        <Section id="appearance-title" title="Appearance">
           <Tabs label="Theme" tabs={THEMES} value={theme} onChange={setTheme}>
             {(value) => (
               <p className="text-sm text-fg-muted">
@@ -47,7 +71,10 @@ export function SettingsPage() {
               </p>
             )}
           </Tabs>
-        </Card>
+        </Section>
+        <Section id="danger-title" title="Danger zone" className="border-danger/40 lg:col-span-2">
+          <DeleteAccount />
+        </Section>
       </div>
     </>
   );

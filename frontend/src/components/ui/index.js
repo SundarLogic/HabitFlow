@@ -9,5 +9,6 @@ export { Checkbox, FormField, Input, Label, Select, Textarea } from './FormContr
 export { ConfirmDialog, Modal } from './Modal.jsx';
 export { SegmentedControl } from './SegmentedControl.jsx';
 export { Spinner } from './Spinner.jsx';
+export { StatCard, StatGrid } from './StatCard.jsx';
 export { Tabs } from './Tabs.jsx';
 export { ToastProvider, useToast } from './Toast.jsx';

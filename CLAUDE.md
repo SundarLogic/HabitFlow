@@ -50,7 +50,8 @@ Missing a day must never produce punitive feedback. Core tracking stays useful o
 | Layer | Technology |
 |---|---|
 | Frontend | **JavaScript** (no TypeScript). React 19 + Vite, React Router 7, TanStack Query 5, Tailwind CSS 4, Recharts, axios, react-hook-form + Zod (`@hookform/resolvers` 5.x), Luxon, clsx, lucide-react (ADR-045) |
-| Backend | Node ≥ 20 (exact LTS pin pending), Express 5, PostgreSQL 16, Sequelize + sequelize-cli (pg, pg-hstore), Zod 4, Luxon, bcrypt, pino + pino-http, helmet, cors, cookie-parser, express-rate-limit, dotenv, node-cron |
+| Runtime | Production on **Node 20** (Render, Docker, Vercel build); frontend test tooling needs **Node 22.12+**, so CI tests the frontend on 22 and develop on Node 22 LTS (ADR-063). Node 20 is end-of-life since 2026-04-30: upgrading production to 22 is a pending follow-up. |
+| Backend | Node ≥ 20, Express 5, PostgreSQL 16, Sequelize + sequelize-cli (pg, pg-hstore), Zod 4, Luxon, bcrypt, pino + pino-http, helmet, cors, cookie-parser, express-rate-limit, dotenv, node-cron |
 | Testing | Jest + Supertest (backend), Vitest + React Testing Library + jest-dom + MSW (frontend), Playwright + @axe-core/playwright (E2E and accessibility, ADR-054) |
 | Backend tooling | nodemon, ESLint (flat config: @eslint/js, globals, eslint-config-prettier), Prettier, cross-env, swagger-ui-dist (dev only: Swagger UI, ADR-059) |
 | Frontend tooling | ESLint (flat config + eslint-plugin-react-hooks), Prettier, jsdom |

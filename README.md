@@ -55,7 +55,7 @@ In development, Vite's dev server plays the role of Vercel: it proxies `/api` to
 
 ## Run it locally (4 commands)
 
-Prerequisites: **Node.js 20+**, **Docker** and Git.
+Prerequisites: **Node.js 22 LTS** (recommended; the app itself runs on Node 20+, but the frontend unit-test tools need 22.12+), **Docker** and Git.
 
 ```bash
 git clone https://github.com/SundarLogic/HabitFlow.git && cd HabitFlow

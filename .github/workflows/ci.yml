@@ -20,7 +20,10 @@ permissions:
   contents: read
 
 env:
+  # The production runtime (Render, Vercel build, Docker image).
   NODE_VERSION: "20"
+  # The frontend test tools (Vitest 5, jsdom 30, MSW 3) need Node 22.12+ (ADR-063).
+  NODE_TEST_VERSION: "22"
   TEST_DATABASE_URL: postgres://habitflow:ci-only-password@localhost:5432/habitflow_test
   CLIENT_ORIGINS: http://localhost:5173
 
@@ -44,8 +47,8 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -64,18 +67,21 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ env.NODE_TEST_VERSION }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
       - run: npm test
-      # The same build Vercel runs (framework Vite, output dist/).
-      - run: npm run build
+      # The same build Vercel runs (framework Vite, output dist/), on the production Node version.
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: node --version && npm run build
 
   e2e:
     name: End-to-end (Playwright)
@@ -93,8 +99,8 @@ jobs:
           --health-cmd "pg_isready -U habitflow -d habitflow_test"
           --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -126,8 +132,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
       # Reads package-lock.json; no install needed. Fails on high or critical advisories.

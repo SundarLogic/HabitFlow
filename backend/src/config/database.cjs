@@ -8,6 +8,12 @@
  *
  * The exported object has one entry per NODE_ENV: development, test, production.
  * Variables are validated by src/config/env.js when the app starts; the CLI only uses them.
+ *
+ * Production (Render + Neon, docs/DEPLOYMENT.md):
+ *   DATABASE_URL         Neon's POOLED connection string, used by the app
+ *   DATABASE_DIRECT_URL  optional, Neon's DIRECT connection string, used by sequelize-cli only
+ *   DB_SSL=true          TLS on, with the server certificate verified
+ *   DB_POOL_MAX          connections per process (default 5 in production, 10 otherwise)
  */
 const path = require('node:path');
 const dotenv = require('dotenv');
@@ -25,9 +31,21 @@ const common = {
     underscored: true, // model field `createdAt` <-> database column `created_at`
     timestamps: true, // models get created_at / updated_at automatically
   },
-  // Connection pool: up to 10 open connections reused across requests (opening a new
-  // connection per request would be slow). Times are in milliseconds.
-  pool: { max: 10, min: 0, idle: 10000, acquire: 30000 },
+  // Connection pool: open connections reused across requests (opening a new connection per
+  // request would be slow). Times are in milliseconds. Production defaults to 5: hosted
+  // databases (Neon's free tier) cap connections, and one Node process rarely needs more.
+  pool: {
+    max: Number(process.env.DB_POOL_MAX) || (process.env.NODE_ENV === 'production' ? 5 : 10),
+    min: 0,
+    idle: 10000,
+    acquire: 30000,
+  },
+  // TLS when DB_SSL=true. rejectUnauthorized: true verifies the server certificate against the
+  // system's trusted CAs (Neon's certificates are publicly trusted), so a man in the middle
+  // can't pose as the database.
+  ...(process.env.DB_SSL === 'true'
+    ? { dialectOptions: { ssl: { require: true, rejectUnauthorized: true } } }
+    : {}),
   // Table where sequelize-cli records which migrations have already run.
   migrationStorageTableName: 'SequelizeMeta',
   // Seeders are not recorded (sequelize-cli default storage "none"), so every seeder must be
@@ -64,8 +82,12 @@ function testConfig(url) {
   return { ...common, url };
 }
 
+// The CLI may use a separate (direct) connection for migrations; see .sequelizerc.cjs.
+const isCli = process.env.HABITFLOW_DB_CLIENT === 'cli';
+const appOrCliUrl = (isCli && process.env.DATABASE_DIRECT_URL) || process.env.DATABASE_URL;
+
 module.exports = {
-  development: fromUrlOrParts(process.env.DATABASE_URL),
+  development: fromUrlOrParts(appOrCliUrl),
   test: testConfig(process.env.TEST_DATABASE_URL),
-  production: fromUrlOrParts(process.env.DATABASE_URL),
+  production: fromUrlOrParts(appOrCliUrl),
 };

@@ -23,7 +23,11 @@ export default defineConfig({
   expect: { timeout: 10_000 },
   fullyParallel: false,
   workers: 1, // one shared test database
-  reporter: [['list']],
+  // In CI (GitHub Actions sets CI=true): an HTML report uploaded when a run fails, one retry
+  // for a flaky browser hiccup, and a stray test.only fails the run.
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : [['list']],
+  retries: process.env.CI ? 1 : 0,
+  forbidOnly: Boolean(process.env.CI),
   use: {
     baseURL: `http://localhost:${WEB_PORT}`,
     trace: 'retain-on-failure',
@@ -58,7 +62,7 @@ export default defineConfig({
         PORT: String(API_PORT),
         LOG_LEVEL: 'warn',
         API_RATE_LIMIT_MAX: '100000',
-        REMINDERS_ENABLED: 'false',
+        RUN_SCHEDULER: 'false',
       },
       reuseExistingServer: false, // fresh rate-limit counters every run
       timeout: 60_000,

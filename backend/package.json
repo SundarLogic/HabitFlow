@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
+    "start:prod": "npm run db:migrate && node src/server.js",
     "test": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest",
     "test:watch": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --watch",
     "lint": "eslint .",
@@ -20,6 +21,7 @@
     "db:migrate:undo": "sequelize-cli --options-path .sequelizerc.cjs db:migrate:undo",
     "db:migrate:undo:all": "sequelize-cli --options-path .sequelizerc.cjs db:migrate:undo:all",
     "db:seed": "sequelize-cli --options-path .sequelizerc.cjs db:seed:all",
+    "db:seed:plans": "sequelize-cli --options-path .sequelizerc.cjs db:seed --seed 20261025000101-plans.cjs",
     "db:reset": "cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:migrate:undo:all && cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:migrate && cross-env NODE_ENV=test sequelize-cli --options-path .sequelizerc.cjs db:seed:all",
     "sequelize": "sequelize-cli --options-path .sequelizerc.cjs",
     "test:coverage": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --coverage",
@@ -53,7 +55,8 @@
     "jest": "^30.5.2",
     "nodemon": "^3.1.14",
     "prettier": "^3.9.10",
-    "supertest": "^7.3.1"
+    "supertest": "^7.3.1",
+    "swagger-ui-dist": "^5.34.0"
   },
   "overrides": {
     "uuid": "^11.1.1"

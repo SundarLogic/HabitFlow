@@ -74,6 +74,11 @@ const clientOrigins = z
 // The individual connection settings that are required when DATABASE_URL is not used.
 const DB_PARTS = ['DB_HOST', 'DB_PORT', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
 
+/** localhost, 127.0.0.1 or ::1: the developer's own machine. */
+function isLocalHost(hostname) {
+  return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname);
+}
+
 /** Extracts the database name from a connection URL ("postgres://.../habitflow_test" -> "habitflow_test"). */
 function databaseName(url) {
   return decodeURIComponent(new URL(url).pathname.replace(/^\//, ''));
@@ -88,6 +93,13 @@ const envSchema = z
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
     PORT: port.default(3000),
     DATABASE_URL: postgresUrl.optional(),
+    // Optional second URL used ONLY by sequelize-cli (migrations, seeders). On Neon, DATABASE_URL
+    // is the pooled connection (for the app) and this is the direct one (recommended for DDL).
+    DATABASE_DIRECT_URL: postgresUrl.optional(),
+    // TLS to PostgreSQL. Required for remote databases in production (Neon only accepts TLS).
+    DB_SSL: booleanString.optional(),
+    // Maximum pooled connections per process (default: 5 in production, 10 otherwise).
+    DB_POOL_MAX: z.coerce.number().int().min(1).max(50).optional(),
     DB_HOST: z.string().optional(),
     DB_PORT: port.optional(),
     DB_USER: z.string().optional(),
@@ -97,16 +109,23 @@ const envSchema = z
     CLIENT_ORIGINS: clientOrigins,
     SESSION_TTL_DAYS: z.coerce.number().int().min(1).max(365).default(30),
     COOKIE_SECURE: booleanString.optional(),
-    // The every-minute reminder scheduler (server.js only; never runs under NODE_ENV=test).
-    REMINDERS_ENABLED: booleanString.optional(),
+    // Runs the background jobs (reminder scheduler + daily housekeeping) in THIS process.
+    // Exactly one instance should run them: set it to false on any extra instance (ADR-057).
+    // Never runs under NODE_ENV=test.
+    RUN_SCHEDULER: booleanString.optional(),
     LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
-    // Express "trust proxy": how many reverse proxies sit in front of the API (0 = none, the
-    // default). Behind a proxy, set it so req.ip (rate limits, logs) is the CLIENT's address and
-    // not the proxy's; otherwise every user shares one rate-limit bucket.
+    // Queries slower than this many milliseconds are logged at "warn" (ADR-058).
+    SLOW_QUERY_MS: z.coerce.number().int().min(1).default(500),
+    // Error tracking: when set (and @sentry/node is installed), 500s and crashes are reported.
+    SENTRY_DSN: z.url().optional(),
     // Requests allowed per 15 minutes (ADR-033). The defaults are the production rules; the
     // Playwright API server raises the general one, since a whole E2E run comes from one IP.
     API_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(300),
     AUTH_RATE_LIMIT_MAX: z.coerce.number().int().min(1).default(10),
+    // Express "trust proxy": how many reverse proxies sit in front of the API (0 = none, the
+    // default). Behind a proxy, set it so req.ip (rate limits, logs) is the CLIENT's address and
+    // not the proxy's; otherwise every user shares one rate-limit bucket. Vercel rewrite +
+    // Render = 2 (docs/DEPLOYMENT.md explains how to check it).
     TRUST_PROXY: z.coerce.number().int().min(0).max(10).default(0),
   })
   // superRefine = rules that involve SEVERAL variables at once. ctx.addIssue() reports a problem.
@@ -148,13 +167,37 @@ const envSchema = z
         message: 'must be true in production',
       });
     }
+
+    if (env.NODE_ENV === 'production') {
+      // The browser app must be served over HTTPS (localhost is allowed for local testing).
+      (env.CLIENT_ORIGINS ?? []).forEach((value, index) => {
+        if (!value.startsWith('https://') && !isLocalHost(new URL(value).hostname)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['CLIENT_ORIGINS', index],
+            message: 'must use https:// in production (e.g. https://habitflow.vercel.app)',
+          });
+        }
+      });
+      // A database on another machine (a host name with dots, e.g. Neon) must use TLS. Local
+      // hosts and Docker service names (no dots, e.g. "db") may run without it.
+      const host = env.DATABASE_URL ? new URL(env.DATABASE_URL).hostname : env.DB_HOST;
+      if (host && host.includes('.') && !isLocalHost(host) && env.DB_SSL !== true) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['DB_SSL'],
+          message: 'must be "true" for a remote database in production (Neon requires TLS)',
+        });
+      }
+    }
   })
   // Final touch: if COOKIE_SECURE wasn't set, default it to true in production, false otherwise.
-  // REMINDERS_ENABLED defaults to true.
+  // RUN_SCHEDULER defaults to true (a single instance runs the jobs); DB_SSL to false.
   .transform((env) => ({
     ...env,
     COOKIE_SECURE: env.COOKIE_SECURE ?? env.NODE_ENV === 'production',
-    REMINDERS_ENABLED: env.REMINDERS_ENABLED ?? true,
+    RUN_SCHEDULER: env.RUN_SCHEDULER ?? true,
+    DB_SSL: env.DB_SSL ?? false,
   }));
 
 /**

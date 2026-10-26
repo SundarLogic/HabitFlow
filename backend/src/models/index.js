@@ -19,6 +19,8 @@
  */
 import { Sequelize } from 'sequelize';
 import { env } from '../config/env.js';
+import { logger } from '../config/logger.js';
+import { createSlowQueryLogger } from '../observability/slowQueries.js';
 import { Habit } from './Habit.js';
 import { HabitCompletion } from './HabitCompletion.js';
 import { HabitReminder } from './HabitReminder.js';
@@ -36,7 +38,14 @@ import databaseConfig from '../config/database.cjs';
 
 // Pick the settings for the current environment: development, test or production.
 // `url` is set when a full connection string is used; `options` holds everything else.
-const { url, ...options } = databaseConfig[env.NODE_ENV];
+const { url, ...configOptions } = databaseConfig[env.NODE_ENV];
+
+// The app (not the CLI) times every query and logs the slow ones (observability/slowQueries.js).
+const options = {
+  ...configOptions,
+  benchmark: true,
+  logging: createSlowQueryLogger({ logger, thresholdMs: env.SLOW_QUERY_MS }),
+};
 
 // Sequelize accepts either a connection URL plus options, or just an options object
 // containing host/port/username/password/database.

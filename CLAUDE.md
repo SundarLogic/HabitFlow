@@ -4,6 +4,14 @@
 > If code and this file disagree, either fix the code or update this file in the same change — never leave them divergent.
 > Product requirements live in [docs/HabitFlow_PRD.md](docs/HabitFlow_PRD.md); decision rationale lives in [docs/DECISIONS.md](docs/DECISIONS.md).
 
+### Start here (new contributor or new session)
+
+1. **Run it:** `node scripts/setup.mjs` once, then `npm --prefix backend run dev` and `npm --prefix frontend run dev` (§7). Demo login `demo@habitflow.local` / `habitflow-demo`; Swagger UI at http://localhost:3000/api/docs.
+2. **Find your way:** backend layers in §4 (routes → validators → controllers → services → domain/models), frontend in §4.2, business rules in §3.1 (binding), API in [docs/API.md](docs/API.md).
+3. **Before you finish:** §8 definition of done. CI (`.github/workflows/ci.yml`) runs lint, format, all tests with coverage thresholds, Playwright E2E and `npm audit` on every push; keep it green.
+4. **Shipping:** production is Vercel (frontend) + Render (API) + Neon (database), set up by following [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Pushing to `main` deploys once CI passes.
+5. **Where things are going:** [docs/ROADMAP_NOTES.md](docs/ROADMAP_NOTES.md) (deferred features and where they plug in), [docs/MOBILE_READINESS.md](docs/MOBILE_READINESS.md) (native client), [docs/QA_REPORT.md](docs/QA_REPORT.md) (what was verified, known limitations).
+
 ---
 
 ## 1. Product summary
@@ -44,9 +52,10 @@ Missing a day must never produce punitive feedback. Core tracking stays useful o
 | Frontend | **JavaScript** (no TypeScript). React 19 + Vite, React Router 7, TanStack Query 5, Tailwind CSS 4, Recharts, axios, react-hook-form + Zod (`@hookform/resolvers` 5.x), Luxon, clsx, lucide-react (ADR-045) |
 | Backend | Node ≥ 20 (exact LTS pin pending), Express 5, PostgreSQL 16, Sequelize + sequelize-cli (pg, pg-hstore), Zod 4, Luxon, bcrypt, pino + pino-http, helmet, cors, cookie-parser, express-rate-limit, dotenv, node-cron |
 | Testing | Jest + Supertest (backend), Vitest + React Testing Library + jest-dom + MSW (frontend), Playwright + @axe-core/playwright (E2E and accessibility, ADR-054) |
-| Backend tooling | nodemon, ESLint (flat config: @eslint/js, globals, eslint-config-prettier), Prettier, cross-env |
+| Backend tooling | nodemon, ESLint (flat config: @eslint/js, globals, eslint-config-prettier), Prettier, cross-env, swagger-ui-dist (dev only: Swagger UI, ADR-059) |
 | Frontend tooling | ESLint (flat config + eslint-plugin-react-hooks), Prettier, jsdom |
-| Local infra | Docker Compose (PostgreSQL 16, databases `habitflow_dev` and `habitflow_test`) |
+| Local infra | Docker Compose (PostgreSQL 16, databases `habitflow_dev` and `habitflow_test`); `docker-compose.prod.yml` + `backend/Dockerfile` for a production-like local run (ADR-060) |
+| Hosting / CI | Vercel (frontend, `frontend/vercel.json`), Render (API, `render.yaml`), Neon (PostgreSQL), GitHub Actions (`.github/workflows/ci.yml`) (ADR-056, ADR-061) |
 
 Do not add dependencies outside this list without recording the decision in `docs/DECISIONS.md`.
 
@@ -151,7 +160,7 @@ _Approved by the product owner on 2026-10-14. These rules are binding: change th
 routes -> validators (Zod) -> controllers (HTTP only) -> services (business logic, transactions) -> models
 ```
 
-- **routes/**: path + middleware wiring only. `routes/index.js` mounts every router under `/api/v1` from the `apiMounts()` table. **Every protected route runs `requireAuth` then `csrfProtection`** (a no-op for GET), and workspace features add `resolveWorkspace`; `tests/integration/routeGuards.test.js` walks the real routers and fails on any route that doesn't (ADR-053).
+- **routes/**: path + middleware wiring only. `routes/index.js` mounts every router under `/api/v1` from the `apiMounts()` table. `docsRoutes.js` serves Swagger UI at `/api/docs` outside production only (ADR-059). **Every protected route runs `requireAuth` then `csrfProtection`** (a no-op for GET), and workspace features add `resolveWorkspace`; `tests/integration/routeGuards.test.js` walks the real routers and fails on any route that doesn't (ADR-053).
 - **validators/**: Zod schemas for `body`, `params` and `query`, applied by `validate({ body, params, query })` (`middleware/validate.js`). The parsed output (coerced, defaults applied, unknown keys stripped) **replaces** `req.body` / `req.params` / `req.query`. Validation failure → 422 `VALIDATION_ERROR` with `details: [{ location, path, message }]`.
 - **controllers/**: read the validated input, call one service, and shape the HTTP response. **Controllers never query the DB directly** and never import models.
 - **services/**: all business logic, authorization checks beyond membership, and transactions (`sequelize.transaction`) for multi-record writes. Services throw typed `AppError`s and know nothing about `req` or `res`. Workspace-scoped services take the workspace id first and always query by `(id, workspaceId)` together. Current services: `auth`, `user`, `workspace`, `entitlement`, `habit`, `completion`, `today`, `analytics` (summary, heatmap, habit history: two queries each), `reminder` (CRUD), `reminderDispatch` (the scheduler's work: 4 queries per tick), `milestone`, `notification` (inbox + purge), `notifications/` (delivery channels + `dispatchNotification`), `streak` (loads completions for many habits in **one** query, as plain rows with the public columns; never query per habit in a loop), `health`.
@@ -160,15 +169,17 @@ routes -> validators (Zod) -> controllers (HTTP only) -> services (business logi
 - **middleware/**: `requestLogger` (pino-http + X-Request-Id), `validate`, `errorHandler` (+ `notFoundHandler`), `rateLimit` (`createRateLimiter`, `createAuthRateLimiter` → 429 via the error handler), `auth` (`requireAuth`), `csrf` (`csrfProtection`), `workspace` (`resolveWorkspace`, `requireRole`). See "Auth flow" below for the order.
 - **scripts/perf/**: `seed.js` (`npm run perf:seed`: 20 users x 50 habits x 2 years in the DEV database) and `bench.js` (`npm run perf:bench`: EXPLAIN ANALYZE of each endpoint's SQL and p50/p95 latency; exits 1 if a p95 is ≥ 200 ms). Re-run after changing the streak, analytics or today code.
 - **serializers/**: the only way models leave the API. `toPublicUser(user)` (allow-list, never a hash), `toPublicWorkspace(workspace, role)`, `toPublicHabit(habit)` (needs `scheduleDays` loaded), `toPublicCompletion(completion)`, `toPublicReminder(reminder)` (`remindAt` as `HH:mm`) and `toPublicNotification(notification)` (never exposes `dedupeKey`). Controllers never `res.json()` a model instance.
-- **jobs/**: node-cron jobs, started **only** by `server.js` via `jobs/index.js` `startJobs()` (never by `app.js`, so tests never start timers; nothing runs under `NODE_ENV=test`). `reminderScheduler.js` (every minute, `runReminderTick({ now })`, off when `REMINDERS_ENABLED=false`) and `housekeeping.js` (daily 03:15 UTC, `runHousekeeping({ now })`: expired sessions and notifications older than 90 days). Each exports its tick function so tests call it with a fake clock. `server.js` stops the jobs first on shutdown.
+- **jobs/**: node-cron jobs, started **only** by `server.js` via `jobs/index.js` `startJobs()` (never by `app.js`, so tests never start timers; nothing runs under `NODE_ENV=test`), and only when `RUN_SCHEDULER=true` (the default; exactly one instance per deployment, ADR-057). `reminderScheduler.js` (every minute, `runReminderTick({ now })`) and `housekeeping.js` (daily 03:15 UTC, `runHousekeeping({ now })`: expired sessions and notifications older than 90 days). Each exports its tick function so tests call it with a fake clock. `server.js` stops the jobs first on shutdown.
 - **config/**:
   - `env.js`: loads `backend/.env`, validates every variable with Zod and exits with a readable message if anything is invalid. Import `env` from here; never read `process.env` elsewhere in app code.
-  - `database.cjs`: the single DB config shared by sequelize-cli and the app (development / test / production).
+  - `database.cjs`: the single DB config shared by sequelize-cli and the app (development / test / production). Production: `DATABASE_URL` (Neon pooled), `DATABASE_DIRECT_URL` (optional, CLI only: `.sequelizerc.cjs` sets `HABITFLOW_DB_CLIENT=cli`), `DB_SSL=true` → verified TLS, pool max `DB_POOL_MAX` (5 in production).
   - `logger.js`: the pino logger and its redaction paths.
   - `auth.js`: cookie/header names, session TTL and touch interval, bcrypt cost, rate limits (from env).
-  - Env vars added in Phase 11: `TRUST_PROXY` (0-10, default 0), `API_RATE_LIMIT_MAX` (default 300), `AUTH_RATE_LIMIT_MAX` (default 10). See `.env.example`.
+  - Env vars added in Phase 11: `TRUST_PROXY` (0-10, default 0; 2 behind Vercel + Render), `API_RATE_LIMIT_MAX` (default 300), `AUTH_RATE_LIMIT_MAX` (default 10). Phase 12: `RUN_SCHEDULER` (replaces `REMINDERS_ENABLED`), `DB_SSL`, `DB_POOL_MAX`, `DATABASE_DIRECT_URL`, `SLOW_QUERY_MS` (500), `SENTRY_DSN`. Production rules: `COOKIE_SECURE` true, https `CLIENT_ORIGINS` (localhost allowed), `DB_SSL=true` for remote DB hosts. See `.env.example` and the table in docs/DEPLOYMENT.md.
+- **observability/**: `slowQueries.js` (Sequelize `benchmark` → warn above `SLOW_QUERY_MS`, literals redacted) and `errorTracking.js` (Sentry-ready: `initErrorTracking`, `captureError`, `scrubEvent` PII scrubbing; a no-op unless `SENTRY_DSN` is set and `@sentry/node` installed). The request logger adds `clientIp` (`req.ip`) to every line (ADR-058).
 - **utils/**: `AppError.js` (typed errors), `clock.js` (the injectable `now()`), `tokens.js` (random tokens, `hashToken`, constant-time `safeEqual`), `password.js` (`hashPassword` / `verifyPassword`), `cookies.js` (set/clear the auth cookies with the right flags).
-- `app.js` exports `createApp({ db, logger, now, rateLimits, trustProxy })` and never listens, so tests inject fakes. Middleware reads the clock from `req.app.locals.now`. Rate limiters and the API router (`createApiRouter`) are built per app, so tests don't share limiter counters. `server.js` listens and handles graceful shutdown: on SIGTERM/SIGINT it closes the HTTP server, then the DB pool, and force-exits after 10 s. `unhandledRejection` and `uncaughtException` log at fatal level and exit 1.
+- `Dockerfile` (multi-stage, non-root, healthcheck, migrations then `exec node`) builds the production image; `.dockerignore` keeps `.env`, tests and scripts out.
+- `app.js` exports `createApp({ db, logger, now, rateLimits, trustProxy })` and never listens, so tests inject fakes. Middleware reads the clock from `req.app.locals.now`. Rate limiters and the API router (`createApiRouter`) are built per app, so tests don't share limiter counters. `server.js` starts error tracking, listens and handles graceful shutdown: on SIGTERM/SIGINT it closes the HTTP server, then the DB pool, and force-exits after 10 s. `unhandledRejection` and `uncaughtException` log at fatal level, are reported to error tracking, and exit 1.
 
 **Async errors:** we rely on **Express 5 native async error handling**. A rejected promise or a throw in an `async` handler is forwarded to the error handler automatically. Do not add an `asyncHandler` wrapper.
 
@@ -267,7 +278,8 @@ CSRF runs before validation so a forged request learns nothing from validation m
 
 ```
 src/
-  main.jsx          providers: AppErrorBoundary > ThemeProvider > QueryClientProvider > ToastProvider > App
+  main.jsx          imports lib/zodConfig.js FIRST (Zod jitless for the CSP), then providers:
+                    AppErrorBoundary > ThemeProvider > QueryClientProvider > ToastProvider > App
   App.jsx           route table (exported as `routes` for tests) + RootLayout (AuthProvider); habit detail,
                     analytics and settings are lazy-loaded (React.lazy + Suspense)
   components/ui/    design system: Button, IconButton, Input, Textarea, Select, Checkbox, Label,
@@ -298,6 +310,8 @@ src/
                     edited user, notifications; `makeNotification`), fakeHabits.js (stateful fake habits, completions,
                     notes, reminders, /today, history, analytics; `db`, `key`, `makeHabit`, `fakeToday`),
                     renderApp.jsx (`renderApp`, `currentUrl`, `statValue`)
+vercel.json         Vercel: /api/* rewrite to Render (placeholder <RENDER_API_HOST>, then the SPA fallback), caching,
+                    security headers + CSP (hash of the inline theme script); checked by src/vercelConfig.test.js
 public/             favicon.svg, manifest.webmanifest, icons/ (PWA basics, ADR-055; regenerate: node scripts/generate-icons.js)
 e2e/                Playwright specs: daily-loop, progress-review, user-stories (PRD §5), accessibility (axe light/dark,
                     keyboard, reduced motion); helpers.js (API setup through page.request, UTC users); global-setup.js
@@ -316,6 +330,7 @@ e2e/                Playwright specs: daily-loop, progress-review, user-stories 
 - **Failures and connectivity (ADR-052):** saves fail fast offline (`networkMode: 'always'`); report mutation errors with `reportMutationError(toast, title, error, retry)` (no toast for a lost session, Retry for network errors). Disable or set `loading` on every submit button while its request runs.
 - **Colours on fills and names (ADR-054):** text or icons on a `bg-status-completed` or `bg-danger` fill use `text-on-completed` / `text-on-danger`, never `text-white` (dark-mode contrast). Form fields show focus with `focus-within:` (date/time picker buttons). The visible text must be part of the accessible name (WCAG 2.5.3): an `aria-label` starts with the visible text.
 - **E2E:** `npm run test:e2e` (Postgres must be running). It starts its own API on :3100 (test DB, raised general rate limit, reminders off) and Vite on :5174, runs on desktop, Pixel 5 and 375 px, and writes screenshots to `test-results/screens/`. Add a spec for every new end-to-end user journey, and add every new page or dialog to `e2e/accessibility.spec.js` (0 serious/critical axe violations, light and dark).
+- **Production headers (ADR-062):** `vercel.json` sets a strict CSP (no inline scripts except the hashed theme script in `index.html`, `connect-src 'self'`). If you edit that inline script, `npm test` fails and prints the new hash for `vercel.json`. Don't add external scripts, fonts or API hosts without updating the CSP; check with `npm run build && npm run preview` (same headers) and the browser console. Never call the API by absolute URL: the app relies on relative `/api` (Vite proxy locally, Vercel rewrite in production).
 - **Tests:** Vitest + RTL + MSW. Query by role or label (`getByRole('button', { name })`), which doubles as an accessibility check. Render the real app with `renderApp(path)`; set `backend.loggedIn = true` for an authenticated user; override one endpoint with `server.use(http.get(...))`. Unhandled requests fail the test.
 
 ---
@@ -374,6 +389,8 @@ e2e/                Playwright specs: daily-loop, progress-review, user-stories 
 
 | Purpose | Command |
 |---|---|
+| **One-time local setup** (root) | `node scripts/setup.mjs` (.env files, Postgres, `npm ci` ×2, migrate, seed) |
+| Production-like local stack (root) | `docker compose -f docker-compose.prod.yml up --build` → API on http://localhost:3001 (stop: `... down`; wipe: `... down -v`) |
 | Start Postgres (dev + test DBs) | `docker compose up -d` |
 | Check Postgres health | `docker compose ps` |
 | List databases | `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d postgres -c "\l habitflow_*"'` |
@@ -382,8 +399,9 @@ e2e/                Playwright specs: daily-loop, progress-review, user-stories 
 | **Backend** (run inside `backend/`) | |
 | Install deps | `npm install` |
 | Configure env | copy `.env.example` → `.env` (DB_PORT must match the root `POSTGRES_PORT`) |
-| Dev server (auto-restart) | `npm run dev` → http://localhost:3000/api/v1/health (also starts the reminder scheduler and housekeeping; set `REMINDERS_ENABLED=false` in `.env` to silence reminders) |
-| Production start | `npm start` |
+| Dev server (auto-restart) | `npm run dev` → http://localhost:3000/api/v1/health, Swagger UI at /api/docs (also starts the reminder scheduler and housekeeping; set `RUN_SCHEDULER=false` in `.env` to silence them) |
+| Production start | `npm start` (server only) · `npm run start:prod` (migrations, then the server: what Render runs) |
+| Seed plans only (safe in production) | `npm run db:seed:plans` (see docs/DEPLOYMENT.md step c for running it against Neon) |
 | Tests (migrates test DB first) | `npm test` · watch: `npm run test:watch` · one file: `npm test -- tests/unit/env.test.js` |
 | Tests + coverage thresholds | `npm run test:coverage` (services/domain ≥ 85%, streaks.js and analytics.js 100%) |
 | Performance dataset / benchmark (dev DB) | `npm run perf:seed`, then `npm run perf:bench` (EXPLAIN + p95 per endpoint, target < 200 ms) |
@@ -431,3 +449,4 @@ e2e/                Playwright specs: daily-loop, progress-review, user-stories 
 | 9 | Core daily experience. Today page: `?date=` navigation (buttons, date picker, ←/→, `n`), progress ring with a quiet 100% celebration, To do / Done / Not scheduled groups, optimistic toggles (aria-pressed; per-habit pending state and focus kept across group moves; inverse rollback with a toast), weekly strip, read-only future days, first-run templates. Habit form (modal / full screen on phones): details, category suggestions, colour and icon pickers, frequency segmented control with weekday chips or a times-per-week stepper, start date, reminders; Zod mirrors the API, server errors inline, friendly plan-limit message. Habits page: Active/Archived tabs, search, category filter, Edit/Archive/Restore/Delete (archive offered first), Move up/down reordering. 63 Vitest tests + Playwright E2E of the full loop on desktop and 375 px (found and fixed: a bottom toast covering the form's submit button on phones). ADR-047, ADR-048. |
 | 10 | Progress and account. Habit detail page: header with Edit/Archive/Restore, stat cards (streaks, 30-day rate, completions), month calendar with optimistic toggles (read-only when archived), notes for today, reminders editor. Analytics page: URL filters (7/30/90 days, this year, custom ≤ 366 days, habit), stat cards, daily/weekly/by-habit/by-category Recharts charts with data tables, null-rate empty state, 365-day keyboard heatmap, paginated history. Notification bell: 60 s + focus polling, inbox panel (mark read, mark all read, habit links), polite live announcements. Settings: profile, searchable timezone (invalidates all queries), notification preferences, password change, plan usage, delete account (password + DELETE). Lazy-loaded routes (Recharts only in the Analytics chunk). 88 Vitest tests + a second Playwright journey on desktop and 375 px. ADR-049, ADR-050. Follow-up: the E2E can't show a real reminder (the scheduler is off under NODE_ENV=test). |
 | 11 | Hardening. E2E for every PRD §5 user story on desktop, Pixel 5 and 375 px; axe on every page and dialog in light and dark (fixed: dark-mode contrast on green/red fills, upcoming-day contrast, label-in-name on the account menu and weekly strip, invisible focus on date/time picker buttons, a focusable layer inside aria-hidden charts, unreachable data-table scroll boxes, missing h1 on full-page states, chart animation under reduced motion); keyboard and reduced-motion checks. Security: uniform requireAuth → csrfProtection chain enforced by a router-walking test, log-secret capture test, production-mode probe (cookies, headers, CORS, 413, no stack/SQL), IDOR review (no gaps; membership check added to reminder dispatch), `TRUST_PROXY` and configurable rate limits, npm audit clean (body-parser upgrade, uuid override), friendly constraint messages. Robustness: offline banner, fail-fast saves with Retry, session-ended message, double-submit guards. Performance: integer date maths and plain completion rows took /today p95 from 934 to 103 ms on 350k completions (indexes were already used); Recharts in its own lazy chunk; Lighthouse mobile 94-100 performance, 100 accessibility. PWA manifest and icons. Coverage thresholds enforced. 557 backend, 92 frontend, 52 E2E tests. docs/QA_REPORT.md. ADR-051 to ADR-055. |
+| 12 | Production readiness for Vercel + Render + Neon (nothing deployed; secrets only in dashboards). Frontend: `vercel.json` (/api rewrite before the SPA fallback, immutable assets, no-cache HTML, strict CSP with the inline-script hash, security headers), relative /api kept, Node 20 build verified, preview serves the same headers, Zod jitless (the app was run under the CSP with zero violations). Backend: production env rules (https origins, TLS for remote DBs), Neon SSL + pooled/direct URLs, pool 5, `TRUST_PROXY=2` with logged `clientIp` and tests of the Vercel + Render X-Forwarded-For chain, `start:prod` (migrate then serve), `db:seed:plans`, `RUN_SCHEDULER` (replaces REMINDERS_ENABLED), slow-query logging, Sentry-ready error tracking with PII scrubbing, Swagger UI at /api/docs outside production, `render.yaml` Blueprint. Docker: multi-stage non-root `backend/Dockerfile` with healthcheck and `docker-compose.prod.yml` (verified: migrations, seed, signup, Bearer, docs 404, healthy). CI: GitHub Actions (backend, frontend, E2E with report upload, npm audit). Docs: DEPLOYMENT.md (click-by-click), README rewrite (4-command setup via `scripts/setup.mjs`, Mermaid architecture), MOBILE_READINESS.md, ROADMAP_NOTES.md, API.md/openapi.yaml (relative server, /api/docs). ADR-056 to ADR-062. |

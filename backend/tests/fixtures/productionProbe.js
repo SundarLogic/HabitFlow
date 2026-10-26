@@ -39,6 +39,8 @@ const denied = await request(app)
   .set('Access-Control-Request-Method', 'GET');
 out.corsDenied = denied.headers['access-control-allow-origin'] ?? null;
 
+out.docsStatus = (await request(app).get('/api/docs/')).status;
+
 out.tooLarge = (
   await request(app)
     .post('/api/v1/auth/login')

@@ -8,6 +8,7 @@
  *   - resets handlers, the fake session and cookies between tests so tests stay independent.
  */
 import '@testing-library/jest-dom/vitest';
+import { configure } from '@testing-library/react';
 import { resetDb } from './fakeHabits.js';
 import { resetBackend, server } from './server.js';
 
@@ -17,6 +18,10 @@ globalThis.ResizeObserver ??= class ResizeObserver {
   unobserve() {}
   disconnect() {}
 };
+
+// findBy*/waitFor wait up to 3 s instead of 1 s. The first test of a file renders the whole app
+// while Vite transforms it; on a fresh install (always the case in CI) that can exceed 1 s.
+configure({ asyncUtilTimeout: 3000 });
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 

@@ -64,6 +64,10 @@ it('allows CORS only for configured origins', () => {
   expect(probe.corsDenied).toBeNull();
 });
 
+it('does not serve the Swagger UI', () => {
+  expect(probe.docsStatus).toBe(404);
+});
+
 it('refuses bodies over 100 kb', () => {
   expect(probe.tooLarge.error.code).toBe('PAYLOAD_TOO_LARGE');
 });

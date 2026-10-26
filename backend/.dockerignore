@@ -1,0 +1,10 @@
+# Keep the image small and free of secrets: only package files and src/ are copied anyway,
+# but excluding these also keeps them out of the build context sent to Docker.
+node_modules
+.env
+.env.*
+!.env.example
+coverage
+tests
+scripts
+*.log

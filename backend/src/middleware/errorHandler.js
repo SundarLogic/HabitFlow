@@ -19,6 +19,7 @@ import {
   ValidationError as SequelizeValidationError, // renamed to avoid clashing with our own ValidationError
 } from 'sequelize';
 import { env } from '../config/env.js';
+import { captureError } from '../observability/errorTracking.js';
 import { AppError, ConflictError, NotFoundError, ValidationError } from '../utils/AppError.js';
 
 /**
@@ -116,6 +117,14 @@ export function errorHandler(err, req, res, next) {
     // Attach the ORIGINAL error so the request logger (pino-http) writes it to the logs at
     // "error" level. The client never sees it; developers find it in the logs.
     res.err = err;
+    // Report it to error tracking (a no-op unless SENTRY_DSN is set), with ids only: no
+    // emails, bodies or query strings (the path without "?...").
+    captureError(err, {
+      requestId: req.id,
+      userId: req.user?.id,
+      method: req.method,
+      route: req.originalUrl?.split('?')[0],
+    });
   }
 
   const body = { error: { code: appError.code, message: appError.message } };

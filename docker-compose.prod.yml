@@ -1,0 +1,59 @@
+# Production-like local stack: the API's production Docker image + its own PostgreSQL.
+#
+#   docker compose -f docker-compose.prod.yml up --build
+#   curl http://localhost:3001/api/v1/health
+#
+# It is a SEPARATE project from docker-compose.yml (its own database volume), so your dev data
+# is untouched. The API runs with NODE_ENV=production (secure cookies, no Swagger UI, JSON
+# logs) but without TLS to the local database (DB_SSL=false is allowed for Docker hosts).
+# No frontend image: in production Vercel serves the frontend. To click through the UI against
+# this API: cd frontend && BACKEND_URL=http://localhost:3001 npm run dev
+#
+# The database password below is a throwaway for this local stack only. Real production
+# secrets never go in files; they are set in the Render dashboard (docs/DEPLOYMENT.md).
+name: habitflow-prod
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: habitflow
+      POSTGRES_PASSWORD: ${PROD_LOCAL_DB_PASSWORD:-local-only-not-a-secret}
+      POSTGRES_DB: habitflow_prod
+      TZ: UTC
+    volumes:
+      - habitflow_prod_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U habitflow -d habitflow_prod"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # No published port: only the API talks to this database.
+
+  api:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgres://habitflow:${PROD_LOCAL_DB_PASSWORD:-local-only-not-a-secret}@db:5432/habitflow_prod
+      DB_SSL: "false"
+      CLIENT_ORIGINS: http://localhost:5173
+      COOKIE_SECURE: "true"
+      TRUST_PROXY: "0"
+      RUN_SCHEDULER: "true"
+      LOG_LEVEL: info
+    # Same start as the image (migrations, then the server), plus the idempotent plans seed so the
+    # stack works on first start. On Render you run the seed once by hand (docs/DEPLOYMENT.md).
+    command:
+      - sh
+      - -c
+      - npm run db:migrate && npm run db:seed:plans && exec node src/server.js
+    ports:
+      - "3001:3000"
+
+volumes:
+  habitflow_prod_pgdata:
+    name: habitflow_prod_pgdata

@@ -28,6 +28,7 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { createRateLimiter } from './middleware/rateLimit.js';
 import { requestLogger } from './middleware/requestLogger.js';
 import { sequelize } from './models/index.js';
+import { createDocsRouter } from './routes/docsRoutes.js';
 import { createApiRouter } from './routes/index.js';
 import { now as systemNow } from './utils/clock.js';
 
@@ -99,6 +100,9 @@ export function createApp({
 
   // 7. All API routes live under /api/v1 (see routes/index.js).
   app.use('/api/v1', createApiRouter({ authRateLimit: rateLimits.auth ?? AUTH_RATE_LIMIT }));
+
+  // 7b. Interactive API docs (Swagger UI) at /api/docs, outside production only (ADR-059).
+  if (env.NODE_ENV !== 'production') app.use('/api/docs', createDocsRouter());
 
   // 8. If no route matched, respond with a 404 in our standard error format.
   app.use(notFoundHandler);

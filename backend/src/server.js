@@ -16,6 +16,11 @@ import { createApp } from './app.js';
 import { env } from './config/env.js';
 import { logger } from './config/logger.js';
 import { startJobs } from './jobs/index.js';
+import {
+  captureError,
+  flushErrorTracking,
+  initErrorTracking,
+} from './observability/errorTracking.js';
 import { sequelize } from './models/index.js';
 
 // If graceful shutdown takes longer than this, we give up and force the process to exit.
@@ -24,15 +29,19 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 // --- Safety nets for errors that escaped all our try/catch blocks -------------------------
 // A promise rejected and nobody awaited/caught it. This is a bug, so log it and exit.
 // (In production a process manager such as Docker or PM2 restarts the app.)
-process.on('unhandledRejection', (reason) => {
-  logger.fatal({ err: reason }, 'Unhandled promise rejection');
+// Both are reported to error tracking (if enabled) before exiting.
+async function crash(err, message) {
+  logger.fatal({ err }, message);
+  captureError(err);
+  await flushErrorTracking();
   process.exit(1);
-});
+}
+process.on('unhandledRejection', (reason) => void crash(reason, 'Unhandled promise rejection'));
 // A synchronous error was thrown and never caught. Same treatment.
-process.on('uncaughtException', (err) => {
-  logger.fatal({ err }, 'Uncaught exception');
-  process.exit(1);
-});
+process.on('uncaughtException', (err) => void crash(err, 'Uncaught exception'));
+
+// Error tracking (Sentry) when SENTRY_DSN is set; a no-op otherwise.
+await initErrorTracking({ logger });
 
 // --- Start the HTTP server ------------------------------------------------------------------
 // We create the server with node:http (instead of app.listen) so we can attach an

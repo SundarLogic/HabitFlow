@@ -31,7 +31,9 @@ describe('parseEnv', () => {
       DB_PORT: 5432,
       SESSION_TTL_DAYS: 30,
       COOKIE_SECURE: false,
-      REMINDERS_ENABLED: true,
+      RUN_SCHEDULER: true,
+      DB_SSL: false,
+      SLOW_QUERY_MS: 500,
       LOG_LEVEL: 'info',
       CLIENT_ORIGINS: ['http://localhost:5173'],
     });
@@ -55,7 +57,10 @@ describe('parseEnv', () => {
     ['PORT', 'abc'],
     ['SESSION_TTL_DAYS', '0'],
     ['COOKIE_SECURE', 'yes'],
-    ['REMINDERS_ENABLED', 'on'],
+    ['RUN_SCHEDULER', 'on'],
+    ['DB_SSL', 'yes'],
+    ['DB_POOL_MAX', '0'],
+    ['SENTRY_DSN', 'not a url'],
     ['LOG_LEVEL', 'verbose'],
     ['NODE_ENV', 'staging'],
     ['DATABASE_URL', 'mysql://x@localhost/db'],
@@ -108,5 +113,41 @@ describe('parseEnv', () => {
     const insecure = parseEnv({ ...base, NODE_ENV: 'production', COOKIE_SECURE: 'false' });
     expect(insecure.success).toBe(false);
     expect(issuePaths(insecure)).toContain('COOKIE_SECURE');
+  });
+
+  describe('production (Render + Neon, docs/DEPLOYMENT.md)', () => {
+    const neon = {
+      NODE_ENV: 'production',
+      DATABASE_URL:
+        'postgres://u:p@ep-cool-name-123456-pooler.eu-central-1.aws.neon.tech/habitflow',
+      DB_SSL: 'true',
+      CLIENT_ORIGINS: 'https://habitflow.vercel.app',
+    };
+
+    it('accepts a typical Render + Neon configuration', () => {
+      const result = parseEnv(neon);
+      expect(result.success).toBe(true);
+      expect(result.data).toMatchObject({ COOKIE_SECURE: true, DB_SSL: true, RUN_SCHEDULER: true });
+    });
+
+    it('requires DB_SSL=true for a remote database', () => {
+      const result = parseEnv({ ...neon, DB_SSL: undefined });
+      expect(result.success).toBe(false);
+      expect(issuePaths(result)).toContain('DB_SSL');
+    });
+
+    it('allows a local or Docker database without SSL', () => {
+      for (const host of ['localhost', '127.0.0.1', 'db']) {
+        const url = `postgres://u:p@${host}:5432/habitflow`;
+        expect(parseEnv({ ...neon, DATABASE_URL: url, DB_SSL: undefined }).success).toBe(true);
+      }
+    });
+
+    it('requires https:// browser origins (localhost is allowed for local testing)', () => {
+      const http = parseEnv({ ...neon, CLIENT_ORIGINS: 'http://habitflow.vercel.app' });
+      expect(http.success).toBe(false);
+      expect(issuePaths(http)).toContain('CLIENT_ORIGINS');
+      expect(parseEnv({ ...neon, CLIENT_ORIGINS: 'http://localhost:5173' }).success).toBe(true);
+    });
   });
 });

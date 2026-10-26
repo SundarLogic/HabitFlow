@@ -12,6 +12,8 @@ info:
     - Calendar dates are `YYYY-MM-DD` and times `HH:mm` in the user's timezone; timestamps are UTC.
     - Rates are fractions 0..1 (4 decimals) and `null` when nothing was due.
 servers:
+  - url: /api/v1
+    description: The server that serves these docs (Swagger UI at /api/docs, non-production)
   - url: http://localhost:3000/api/v1
     description: Local development
 security:

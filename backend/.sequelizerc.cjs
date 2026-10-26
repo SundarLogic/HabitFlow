@@ -16,6 +16,10 @@
  */
 const path = require('node:path');
 
+// Tells src/config/database.cjs that the CLI (not the app) is connecting, so migrations can use
+// DATABASE_DIRECT_URL when it is set (Neon: direct connection for DDL, pooled one for the app).
+process.env.HABITFLOW_DB_CLIENT = 'cli';
+
 module.exports = {
   config: path.resolve(__dirname, 'src/config/database.cjs'),
   'models-path': path.resolve(__dirname, 'src/models'),

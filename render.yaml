@@ -1,0 +1,60 @@
+# Render Blueprint for the HabitFlow API (docs/DEPLOYMENT.md, step b).
+#
+# In Render: New -> Blueprint -> pick this repository. Render reads this file, creates the web
+# service, and asks you for every variable marked `sync: false` (secrets and URLs that differ
+# per deployment). Nothing secret is stored in this file.
+#
+# The API is a long-running Node process: the reminder scheduler (node-cron, every minute) and
+# the daily housekeeping job run inside it (RUN_SCHEDULER=true). Keep ONE instance.
+services:
+  - type: web
+    name: habitflow-api
+    runtime: node
+    # "free" sleeps after ~15 minutes without traffic: reminders stop firing while asleep and the
+    # next request takes ~1 minute. For reliable reminders use "starter" (always on).
+    plan: free
+    # Pick the region closest to your Neon database (Neon "AWS Europe (Frankfurt)" -> frankfurt,
+    # "US East (Ohio)" -> ohio, "US West (Oregon)" -> oregon).
+    region: frankfurt
+    rootDir: backend
+    buildCommand: npm ci
+    # Migrations first (never sequelize.sync()), then the server. See backend/package.json.
+    startCommand: npm run start:prod
+    healthCheckPath: /api/v1/health
+    # Deploy only after GitHub CI has passed on the commit (docs/DEPLOYMENT.md, CI section).
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: NODE_ENV
+        value: production
+      # Neon POOLED connection string (host contains "-pooler"). Secret.
+      - key: DATABASE_URL
+        sync: false
+      # Neon DIRECT connection string, used only by migrations. Secret. Optional.
+      - key: DATABASE_DIRECT_URL
+        sync: false
+      - key: DB_SSL
+        value: "true"
+      - key: DB_POOL_MAX
+        value: "5"
+      # Your Vercel URL, e.g. https://habitflow.vercel.app (no trailing slash). Set after step e.
+      - key: CLIENT_ORIGINS
+        sync: false
+      - key: COOKIE_SECURE
+        value: "true"
+      # Browser -> Vercel rewrite -> Render proxy -> app = 2 proxies. Check it with the
+      # "clientIp" in the logs (docs/DEPLOYMENT.md, step g).
+      - key: TRUST_PROXY
+        value: "2"
+      - key: RUN_SCHEDULER
+        value: "true"
+      - key: LOG_LEVEL
+        value: info
+      - key: SESSION_TTL_DAYS
+        value: "30"
+      - key: SLOW_QUERY_MS
+        value: "500"
+      # Optional error tracking (needs `npm install @sentry/node` in backend/). Secret.
+      - key: SENTRY_DSN
+        sync: false

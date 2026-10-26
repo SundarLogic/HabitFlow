@@ -9,6 +9,8 @@
  * Before rendering we ask the API for a CSRF cookie (GET /auth/csrf), so the very first form
  * submission already has a token. If it fails (API down), the client retries before each write.
  */
+// First: Zod settings must be in place before any schema module runs (see the file).
+import './lib/zodConfig.js';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';

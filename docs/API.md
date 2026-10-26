@@ -10,6 +10,19 @@ Related documents:
 
 The examples use a New York user on **Wednesday 2026-10-28** (except where stated). IDs are shortened to `…` where the full UUID doesn't matter.
 
+**Where the API lives:**
+
+| Environment | Base URL |
+|---|---|
+| Local | `http://localhost:3000/api/v1`, or `http://localhost:5173/api/v1` through the Vite proxy |
+| Production, browser | `https://<your-app>.vercel.app/api/v1`. Vercel forwards `/api/*` to Render, so the browser stays on one origin ([DEPLOYMENT.md](DEPLOYMENT.md)) |
+| Production, native apps and scripts | `https://<render-host>/api/v1`, with a Bearer token ([MOBILE_READINESS.md](MOBILE_READINESS.md)) |
+
+**Interactive docs:** Swagger UI at **`/api/docs`** (for example http://localhost:3000/api/docs) shows this API from [openapi.yaml](openapi.yaml), with "Try it out".
+- It is served in **development and test only, never in production**.
+- GETs work with your login cookie.
+- For writes, click **Authorize → bearerAuth** and paste your session token: Bearer requests need no CSRF header.
+
 ---
 
 ## 1. Conventions

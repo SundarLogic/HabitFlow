@@ -8,9 +8,32 @@
  */
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 
 const backendUrl = process.env.BACKEND_URL ?? 'http://localhost:3000';
+
+/**
+ * The security headers Vercel sends with the app (vercel.json), reused by `npm run preview` so
+ * the production Content-Security-Policy can be tried locally before deploying. HSTS and
+ * upgrade-insecure-requests are left out: preview runs on plain http://localhost.
+ */
+function vercelSecurityHeaders() {
+  const config = JSON.parse(readFileSync(new URL('./vercel.json', import.meta.url), 'utf8'));
+  const rule = config.headers.find((h) =>
+    h.headers.some((x) => x.key === 'Content-Security-Policy'),
+  );
+  return Object.fromEntries(
+    rule.headers
+      .filter(({ key }) => key !== 'Strict-Transport-Security')
+      .map(({ key, value }) => [
+        key,
+        key === 'Content-Security-Policy'
+          ? value.replace(/;\s*upgrade-insecure-requests/, '')
+          : value,
+      ]),
+  );
+}
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
@@ -24,6 +47,7 @@ export default defineConfig({
   // `npm run preview` serves the production build (dist/) the same way, e.g. for Lighthouse.
   preview: {
     port: 4173,
+    headers: vercelSecurityHeaders(),
     proxy: {
       '/api': { target: backendUrl, changeOrigin: false },
     },

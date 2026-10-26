@@ -34,6 +34,13 @@ export function requestLogger(logger) {
       return id;
     },
 
+    // The client's IP as Express sees it (req.ip honours TRUST_PROXY). Logged once per request
+    // so a deployment can check the proxy hop count: it must be YOUR public IP, not a
+    // Vercel/Render address (docs/DEPLOYMENT.md). Without it every user shares one rate limit.
+    customProps(req) {
+      return { clientIp: req.ip };
+    },
+
     // Choose the log level from the outcome so problems stand out:
     // 5xx (our bug / outage) = error, 4xx (client mistake) = warn, everything else = info.
     customLogLevel(req, res, err) {

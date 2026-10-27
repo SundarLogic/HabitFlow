@@ -15,7 +15,7 @@ services:
     plan: free
     # Pick the region closest to your Neon database (Neon "AWS Europe (Frankfurt)" -> frankfurt,
     # "US East (Ohio)" -> ohio, "US West (Oregon)" -> oregon).
-    region: frankfurt
+    region: singapore
     rootDir: backend
     buildCommand: npm ci
     # Migrations first (never sequelize.sync()), then the server. See backend/package.json.

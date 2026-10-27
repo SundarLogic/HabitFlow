@@ -7,7 +7,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://<RENDER_API_HOST>/api/$1"
+      "destination": "https://habitflow-api-srbj.onrender.com/api/$1"
     },
     {
       "source": "/(.*)",
